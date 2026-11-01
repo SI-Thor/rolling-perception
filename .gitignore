@@ -1,0 +1,9 @@
+/target
+**/target
+*.o
+experiments/thor-cuda/exp1
+experiments/thor-cuda/exp1b
+experiments/thor-cuda/exp2_nvrtc_swap
+experiments/thor-cuda/exp3_persistent
+experiments/thor-cuda/exp4
+experiments/thor-cuda/exp4b

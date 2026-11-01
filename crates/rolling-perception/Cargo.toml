@@ -1,0 +1,12 @@
+[package]
+name = "rolling-perception"
+version = "0.1.0"
+edition = "2021"
+description = "Phase-interleaved rolling perception vs. batched-frame baseline: same lanes, same real work, two schedulers, measured. Dependency-free (std only)."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = false
