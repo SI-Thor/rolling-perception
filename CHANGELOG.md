@@ -6,6 +6,16 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — extraction plan for the change-ledger core, 2026-11-02
+
+- docs/EXTRACTION-PLAN.md: the core defined by subtraction (11 IN /
+  11 OUT; the JEV rack demoted to one adapter behind an embedder
+  seam), dependency surgery, toolkit surface, composition-docs
+  outline, proof battery, production-grade gap list (the frozen-
+  feed freshness defect is the core's #1 blocker), five worked
+  examples from real runs, and a 10-step publish checklist whose
+  publish step waits for Casey's explicit word.
+
 ## [Unreleased] — presence from-the-chair acceptance PERFORMED, 2026-11-02
 
 - The Amendment-2 headline test is closed: Casey held a spoken
