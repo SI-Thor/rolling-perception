@@ -6,6 +6,21 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — SenseNova Loop-9B study: no seat, 2026-11-02
+
+- docs/STUDY-SENSENOVA-LOOP-9B.md: studied from primary sources,
+  no download. Corrections to the press version: 32 distinct
+  layers with block [4,28) run twice (56 executions), ~14.6B
+  effective inference parameters, loop count FIXED in the
+  checkpoint (no inference-time dial — the budget-currency idea
+  dies on this artefact), all benchmarks vendor-claimed.
+  Verdicts: brain study-only (cannot be served by the house
+  stack today; ~5x incumbent per-token compute; multimodality
+  would break verdict-only grounding), embedder NO (no embedding
+  story; bad-view geometry; ~6x I-JEPA cost), concept study-only
+  (kinship real — shared operator iterated — but theirs is
+  fixed and fused, ours is adaptive and metered).
+
 ## [Unreleased] — leverage memo for arXiv:2610.39302, 2026-11-02
 
 - docs/PAPER-LEVERAGE-2610.39302.md: seven levers extracted from
