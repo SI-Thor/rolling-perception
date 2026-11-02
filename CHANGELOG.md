@@ -6,6 +6,20 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — presence V4 design: realtime, interruptible, fenced, 2026-11-02
+
+- slice2/presence/V4-DESIGN.md: Shape B chosen — the v3 cascade
+  streamed (llama.cpp v0.8.0 as audio transport only via
+  /v1/realtime + /tts-or-Piper; digest, Qwen3-Coder brain and
+  claims.py unchanged). Shape A (LFM3 end-to-end voice chat)
+  rejected as designed: no text bottleneck for the claim checker —
+  survives only spike-gated. Interrupt budget: signal-to-silence
+  p95 <= 300 ms; the client never waits for server drain.
+  Fence = sentence-buffered release: a sentence is synthesized
+  only after it passes the v3 gate order; failures are replaced
+  in-queue by template truths, receipted. Unverified protocol
+  behaviour (U1-U6) assigned to a B0 spike, not assumed.
+
 ## [Unreleased] — SenseNova Loop-9B study: no seat, 2026-11-02
 
 - docs/STUDY-SENSENOVA-LOOP-9B.md: studied from primary sources,
