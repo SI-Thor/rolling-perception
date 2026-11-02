@@ -30,6 +30,11 @@ Built here:
   decode → STT (CPU int8) → ledger digest → brain → Piper, returns
   transcript + reply text + reply audio (base64 WAV) + per-stage
   timings; every call appends a receipts line.
+- `piper_worker.py` — resident Piper synthesis worker (see TTS
+  below): loads the voice once, serves text → WAV over a unix
+  socket (request = one line of text; reply = `OK <nbytes>` +
+  WAV bytes).
+- `tts_bench.py` — spawn-vs-resident TTS bench (stdlib only).
 - `index.html` — one static page: hold-to-talk (or tap-to-toggle),
   a live state indicator (idle / ● LIVE listening / thinking /
   speaking), transcript and reply shown, reply played on the
@@ -60,6 +65,56 @@ or touched.
 Then open `http://thor.local:8330` (or the Thor's LAN IP) in any
 browser on the LAN and hold the button. Stop with Ctrl-C — nothing
 is installed, nothing is resident.
+
+## TTS — the resident Piper worker
+
+Spawn-per-call Piper was the loop's biggest stage: process start +
+ONNX model load on *every* reply. Measured on the Thor
+(`tts_bench.py`, plus paired acceptance runs, same fixture):
+
+| TTS path | TTS stage | total /hear loop |
+|---|---|---|
+| spawn-per-call (before) | 1,974 ms | 2,891 ms |
+| resident worker (after) | **287 ms** | **1,284 ms** |
+
+(The original presence build measured 2,788 ms / 4,860 ms on a
+colder box; the table above is the controlled same-session pair.
+A confirmation acceptance run on the final shipped code: TTS
+499 ms, PASS.)
+
+Bench detail (`tts_bench.py`, same texts both paths):
+- spawn-per-call: p50 2,664 ms, p99 3,465 ms (n=6)
+- worker start-to-ready: 2,011 ms — the spawn tax, paid **once**
+- first request after ready: 852 ms
+- warm requests (n=12, mixed lengths): p50 852 ms, p99 1,509 ms;
+  per length — short ~120–225 ms, medium ~550–970 ms,
+  long ~1,165–1,509 ms. Synthesis time is length-bound; the
+  process tax is what's gone.
+- worker RAM: 137 MB RSS at ready, ~273 MB after a warm set
+  (ONNX arena growth) — the honest rent for the speed.
+- cold /hear where the backend must start the worker itself:
+  ~2.0–2.6 s once per backend run, then warm.
+
+How it runs: `presence.py` uses the resident path when available
+(`TTS_RESIDENT=0` disables it) and falls back to spawn-per-call on
+any worker failure. The backend starts the worker **on demand** on
+the first /hear that needs it and stops it at shutdown; a worker
+started explicitly is used as-is and left running. Never a
+systemd resident. Manual control:
+
+    # start (radio-room venv python — that's where piper lives)
+    ~/radio-room-thor/.venv/bin/python piper_worker.py \
+        --sock ~/confluence-play/slice2/piper.sock \
+        --model ~/radio-room-thor/voices/en_US-lessac-medium.onnx
+    # stop: SIGTERM/SIGINT to that PID, or kill it; the socket
+    # file is removed on the next start.
+
+Build lesson, recorded because it cost a debug cycle: uvicorn
+re-raises the captured SIGTERM after lifespan shutdown, so a
+`finally`/`atexit` around `uvicorn.run` never executes on a
+service stop — the owned worker is stopped from FastAPI's
+shutdown event instead (both hooks are in place; the lifespan
+one is the one that fires under uvicorn).
 
 ## Acceptance
 

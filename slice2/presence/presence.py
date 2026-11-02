@@ -27,17 +27,41 @@ ffmpeg to 16 kHz mono WAV and decoded with the stdlib wave module.
 Config (env):
   PRESENCE_PORT  default 8330
   LEDGER_DIR     default ~/confluence-play/slice1/run/ledger
-  BRAIN_URL      default http://127.0.0.1:8001  (any OpenAI-shaped
-                 llama.cpp chat endpoint; model auto-detected)
+  BRAIN_URL      default http://127.0.0.1:8310 — the bench winner's
+                 port (Qwen3-Coder-30B-A3B-Instruct Q4_K_M, served
+                 detached by brain-server.sh; BRAIN-BENCH.md has the
+                 scores). Named fallback: LFM2-1.2B Q8_0, same port
+                 via `brain-server.sh start fallback`. Any
+                 OpenAI-shaped llama.cpp chat endpoint works; the
+                 model is auto-detected.
+  BRAIN_MAX_TOKENS  default 64 — the winner writes briefings, not
+                 table talk; brevity is also enforced post-generation
+                 (trim_reply: 2 sentences / 45 words) because TTS is
+                 the loop's scarcest stage.
+  STALE_TOLERANCE_S default 90 — a stream whose heartbeat is older
+                 than its lens tolerance (lens.txt
+                 heartbeat_tolerance_s wins when present) is rendered
+                 in the digest as a NOT REPORTING line, in words.
+  PRESENCE_HISTORY_TURNS default 4 — recent exchanges ride in the
+                 prompt so follow-ups ("What colour is it?") resolve.
   PIPER_BIN      default ~/radio-room-thor/.venv/bin/piper
   PIPER_VOICE    default ~/radio-room-thor/voices/en_US-lessac-medium.onnx
   WHISPER_MODEL  default tiny.en (already in the HF cache on the Thor)
   RECEIPTS_LOG   default ./receipts.jsonl next to this file
+  TTS_RESIDENT   default 1 — speak via the resident piper_worker
+                 (unix socket) when possible, falling back to
+                 spawn-per-call. Set 0 to disable the resident path.
+  PIPER_SOCK     default ~/confluence-play/slice2/piper.sock
+  PIPER_VENV_PY  default ~/radio-room-thor/.venv/bin/python
+                 (interpreter that owns the piper package)
 """
+import atexit
 import base64
+from collections import deque
 import json
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import time
@@ -61,6 +85,11 @@ PIPER_VOICE = os.environ.get(
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "tiny.en")
 RECEIPTS_LOG = Path(os.environ.get(
     "RECEIPTS_LOG", Path(__file__).with_name("receipts.jsonl")))
+TTS_RESIDENT = os.environ.get("TTS_RESIDENT", "1") != "0"
+PIPER_SOCK = os.environ.get(
+    "PIPER_SOCK", str(HOME / "confluence-play/slice2/piper.sock"))
+PIPER_VENV_PY = os.environ.get(
+    "PIPER_VENV_PY", str(HOME / "radio-room-thor/.venv/bin/python"))
 PAGE = Path(__file__).with_name("index.html")
 
 PERSONA = (
@@ -208,9 +237,117 @@ def ask_brain(transcript, digest):
     return data["choices"][0]["message"]["content"].strip()
 
 
+# ---------- TTS: resident Piper worker, spawn fallback -------------------
+# Spawn-per-call Piper pays process start + model load on every reply
+# (~2 s measured). piper_worker.py holds the voice in memory and
+# serves text -> WAV over a unix socket. The backend starts it on
+# demand (first /hear that needs it) and stops it at shutdown if the
+# backend started it; a worker started explicitly is used as-is and
+# left running. Any resident failure falls back to the spawn path.
+
+_worker_proc = None
+_worker_owned = False
+_last_tts_path = None
+
+
+def _worker_alive():
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(2)
+            s.connect(PIPER_SOCK)
+        return True
+    except OSError:
+        return False
+
+
+def _ensure_worker():
+    """Make a resident worker reachable, starting one on demand."""
+    global _worker_proc, _worker_owned
+    if _worker_alive():
+        return
+    try:  # stale socket file from a dead worker
+        Path(PIPER_SOCK).unlink()
+    except OSError:
+        pass
+    worker = Path(__file__).with_name("piper_worker.py")
+    if not worker.exists() or not Path(PIPER_VENV_PY).exists():
+        raise RuntimeError("piper_worker.py or venv python missing")
+    log = open(RECEIPTS_LOG.with_name("piper-worker.log"), "ab")
+    _worker_proc = subprocess.Popen(
+        [PIPER_VENV_PY, str(worker), "--sock", PIPER_SOCK,
+         "--model", PIPER_VOICE],
+        stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    _worker_owned = True
+    deadline = time.time() + 90  # model load is seconds; be generous
+    while time.time() < deadline:
+        if _worker_proc.poll() is not None:
+            raise RuntimeError("piper worker exited during start; see "
+                               "piper-worker.log")
+        if _worker_alive():
+            return
+        time.sleep(0.2)
+    raise RuntimeError("piper worker did not become ready in 90 s")
+
+
+def _stop_owned_worker():
+    global _worker_proc, _worker_owned
+    if _worker_owned and _worker_proc is not None \
+            and _worker_proc.poll() is None:
+        _worker_proc.terminate()
+        try:
+            _worker_proc.wait(timeout=5)
+        except Exception:
+            _worker_proc.kill()
+        try:
+            Path(PIPER_SOCK).unlink()
+        except OSError:
+            pass
+    _worker_owned = False
+
+
+atexit.register(_stop_owned_worker)
+
+
+def _speak_resident(clean):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.settimeout(180)
+        s.connect(PIPER_SOCK)
+        s.sendall(clean.replace("\n", " ").encode() + b"\n")
+        buf = b""
+        while b"\n" not in buf:
+            chunk = s.recv(65536)
+            if not chunk:
+                raise RuntimeError("piper worker closed the connection")
+            buf += chunk
+        header, _, data = buf.partition(b"\n")
+        parts = header.decode("utf-8", "replace").split(" ", 1)
+        if len(parts) != 2 or parts[0] != "OK":
+            raise RuntimeError("piper worker said: "
+                               + header.decode("utf-8", "replace"))
+        n = int(parts[1])
+        while len(data) < n:
+            chunk = s.recv(min(65536, n - len(data)))
+            if not chunk:
+                raise RuntimeError("piper worker sent a short WAV")
+            data += chunk
+    if not data.startswith(b"RIFF"):
+        raise RuntimeError("piper worker returned a non-WAV payload")
+    return data
+
+
 def speak(text):
-    """Piper via the radio-room venv binary; temp file (Piper seeks)."""
+    """TTS: resident Piper worker when available, else spawn-per-call
+    via the radio-room venv binary (temp file; Piper seeks)."""
+    global _last_tts_path
     clean = re.sub(r"[*#`_>]", "", text).strip()
+    if TTS_RESIDENT:
+        try:
+            _ensure_worker()
+            _last_tts_path = "resident"
+            return _speak_resident(clean)
+        except Exception:
+            pass  # fall through to the known-good spawn path
+    _last_tts_path = "spawn"
     fd, tmp = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
@@ -248,6 +385,14 @@ def receipt(obj):
 app = FastAPI(title="confluence-presence")
 
 
+@app.on_event("shutdown")
+def _on_shutdown():
+    # uvicorn re-raises the captured SIGTERM after lifespan shutdown,
+    # so process-level finally/atexit never run on a service stop —
+    # the owned TTS worker must be stopped HERE, inside the lifespan.
+    _stop_owned_worker()
+
+
 @app.get("/", response_class=HTMLResponse)
 def page():
     return PAGE.read_text()
@@ -260,7 +405,10 @@ def health():
             "whisper_model": WHISPER_MODEL,
             "whisper_loaded": _whisper is not None,
             "whisper_load_s": _whisper_load_s,
-            "voice": Path(PIPER_VOICE).name}
+            "voice": Path(PIPER_VOICE).name,
+            "tts_resident": TTS_RESIDENT,
+            "piper_sock": PIPER_SOCK,
+            "worker_owned": _worker_owned}
 
 
 @app.post("/hear")
@@ -289,6 +437,7 @@ async def hear(audio: UploadFile = File(...)):
     t0 = time.perf_counter()
     wav_bytes = speak(reply)
     timings["tts_ms"] = round((time.perf_counter() - t0) * 1000)
+    timings["tts_path"] = _last_tts_path
 
     stats = wav_stats(wav_bytes)
     timings["total_ms"] = round((time.perf_counter() - t_start) * 1000)
@@ -306,4 +455,7 @@ async def hear(audio: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=PORT)
+    finally:
+        _stop_owned_worker()
