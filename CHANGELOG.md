@@ -6,7 +6,46 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
-## [Unreleased] — wave 3 (first real workload: harbor-watch), 2026-11-01
+## [Unreleased] — Confluence slices 1–3, 2026-11-01 (evening)
+
+### Added
+- **The Confluence spec** (`docs/SPEC-STREAM-PLATFORM.md`) + Amendment 1
+  (thin devices first-class; one wiring model for the technician;
+  converters are the platform's problem) + Amendment 2 (presence),
+  and two refereed adversarial panel rounds (`docs/SPEC-PANEL-1.md`,
+  `slice2/SPEC-PANEL-2.md`; raws in `docs/panel-1/`, `slice2/panel-2/`).
+- **Slice 1** (`slice1/`): `confluence-watch` live service (parity-tested
+  against the batch pipeline), console with a working corrections
+  button, technician install pack (dry-run-first). Acceptance: staged
+  cut 16/16 tiles in 3.35 s, object exactly {5,6} in 0.39 s, drift
+  silent, spend 11.8% of embed-everything.
+- **Live camera + 48 h soak** (`slice1/PROART-CAMERA.md`): the ProArt
+  webcam feeds the watch by outbound push (Windows firewall blocks
+  inbound); gate 3.0 night-calibrated, 0 steady-state nominations in
+  1,199 frames. Soak runs 2026-11-01 18:18 → 2026-11-03 18:18 AKST.
+- **Slice 2** (`slice2/`): NVENC bench (sessions don't cap; aggregate
+  encode-fps ~580–640 does; V4L2 H.265 2.5–3.5× cheaper than ffmpeg
+  nvenc), brain bench (Qwen3-Coder-30B already on disk wins the
+  presence seat), presence v1–v3 (resident Piper: TTS 1,974 → 287 ms;
+  verdict-only grounding; digest v2; deterministic claim checker),
+  player spike (remux-first HLS, encode-fps budget with 429 refusal,
+  frame-counter watchdog).
+- **Slice 3** (`slice3/`): backfill pass 1+2 (234 real items shelved;
+  the house's video holding is 65.9 s) and the synthesiser experiment
+  (engine beats sampler at every reader lag, 8–18×; snap rule v2:
+  3× against a decontaminated band recovers a reversal in 2.0 s with
+  zero false snaps).
+- **Reading guide + results ledger** (`docs/READING-GUIDE.md`,
+  `docs/RESULTS.md`).
+
+### Honest negatives kept on the record
+- Panel round 2's prompt-cache design failed (per-model caching;
+  one question per model) — round 3 owes ≥2 questions per model.
+- The diff gate remains a ranker, not a separator; Jev remains
+  advisor-only; presence has never been used by a human (all voice
+  acceptance is synthesised-speech fixtures).
+
+## [Wave 3] — first real workload: harbor-watch, 2026-11-01
 
 ### Added
 - `crates/harbor-watch` — rolling visual change detection over real

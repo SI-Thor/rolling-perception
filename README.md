@@ -10,6 +10,27 @@ times; a system that processes each stage as it lands and emits an output
 per stage completion perceives a **continuous stream** instead of a
 stepped sequence — with measurably earlier first outputs for identical work.
 
+## Where this stands (2026-11-01, evening)
+
+The engine grew a product. **Confluence** — a Thor as the back-end
+superpower for thin devices, every stream a cell in a graph — is
+specified in `docs/SPEC-STREAM-PLATFORM.md` (plus Amendments 1–2) and
+its first three slices are built and measured:
+
+- **Slice 1 is live**: `confluence-watch` watches a real camera
+  (the ProArt's webcam, standing in for a phone) and is inside a
+  **48-hour soak** (2026-11-01 18:18 → 2026-11-03 18:18 AKST).
+- **Slice 2**: presence (a browser lends the Thor its mic and speaker;
+  the voice loop is claim-checked before it speaks) and a budgeted
+  HLS player, both acceptance-tested.
+- **Slice 3**: the library shelf holds 234 real items, and the
+  synthesiser experiment shows maintained world state beating held
+  samples 8–18× for late readers.
+
+**Start with `docs/READING-GUIDE.md`** for the map, and
+**`docs/RESULTS.md`** for every headline number with its source —
+deficits included at the same prominence as the wins.
+
 ## Prerequisites
 
 - **Rust, stable, edition 2021** (developed/tested on rustc 1.99.1; any
