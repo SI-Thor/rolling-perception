@@ -23,11 +23,12 @@ them — the repo rule: no claim without a test or a bench number.
   embedded 0.48), not a separator.
 - HTML report tool (`experiments/wave3/report/`) — verdicts a human
   can open: frames with changed tiles overlaid, scoreboard vs truth.
-- The reflective Jev lane (`experiments/wave3/jev/`) is **built but
-  unmeasured**: both routes (pi agent, direct connector) reach a
-  credential wall (pi has none configured; the stored key 401s).
-  Runner executes when the credential is reconnected. No Jev numbers
-  are claimed anywhere in this wave.
+- The reflective Jev lane (`experiments/wave3/jev/`), measured after
+  the TypeSafe credential was reconnected: 15/15 calls, p50 0.47 s;
+  Jev alone P=0.750/R=1.000, as tie-breaker it *lowered* the refined
+  pipeline's perfect score, as gate it changed nothing. **Verdict:
+  Jev earns the recorded-advisor seat, not the gate** — the sheaf
+  refine is what fixed the false positives.
 - Footprint note: the JEV rack was started for the run and stopped
   after — verified inactive. Nothing in wave 3 is resident.
 

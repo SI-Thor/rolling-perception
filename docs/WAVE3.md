@@ -81,23 +81,32 @@ self-contained HTML page (frames with changed tiles overlaid,
 scoreboard vs ground truth) — generated for sequence C from the real
 verdicts.
 
-## The reflective layer: Jev (TypeSafe, via the pi agent) — UNMEASURED
+## The reflective layer: Jev (TypeSafe) — measured 2026-11-01
 
 Casey noted the pi agent on the Oracle also carries Jev (TypeSafe
 AI). A judge lane was built: 15 text-state candidates (including the
 fixture's two raw false positives — the exact reflective case), a
 typed yes/no with explicit corroboration criteria, a borderline band
-of [0.15, 0.60], and a runner that reports agreement and the
-precision/recall delta of Jev as tie-breaker vs as gate
-(`experiments/wave3/jev/`).
+of [0.15, 0.60] (`experiments/wave3/jev/`).
 
-**It could not run**: pi's TypeSafe provider has no credential
-configured, and the stored TypeSafe connector key returns 401 from
-api.typesafe.ai (verified the request carried it). No Jev numbers
-are claimed. The runner executes in ~2 min once the credential is
-reconnected. Precedent (Syzygy 6/6; three-speed reflex tier) says
-the design is sound; this project's rule says the seat is earned by
-its delta on ground truth, and that measurement is pending.
+First attempt failed at the credential wall (pi's TypeSafe provider
+unconfigured; the stored connector key returned 401). After Casey
+reconnected the credential, the direct route ran clean: **15/15
+calls, latency p50 0.47 s** — reflective-tier speed, not reflex.
+
+The scorecard (fixture ground truth): raw system P=0.600; **sheaf
+refine alone P=1.000, R=1.000**; Jev alone P=0.750, R=1.000; Jev as
+tie-breaker **made it worse (0.750)**; Jev as a hard gate changed
+nothing (1.000). Jev never doubted a true change (p 0.88–0.92) and
+killed one spike FP, but believed the spike's return edge at 0.61
+where the sheaf step had already said no. **Verdict by the
+project's rule — the seat is earned by the delta: Jev does not earn
+the gate. It earns the recorded-advisor seat**: its probability
+rides in the verdict as a second opinion, surfaced, not
+thresholded. What fixed the false positives was the sheaf refine,
+not the judge. n=15 and curated hard; the honest next measurement
+is a bigger, duller candidate stream. Full run: 
+`experiments/wave3/jev/RESULTS.md` + `jev_verdicts.jsonl`.
 
 ## Service footprint
 
@@ -114,7 +123,7 @@ scene moved, catches every real cut the frame it lands, stays
 silent on gradual motion, and produces a page a human can open.
 The honest limits are in this document: the gate is a ranker, the
 director's focus does not yet gate compute, and the reflective
-judge is unmeasured pending a credential.
+judge — measured at last — earns an advisory seat, not the gate.
 
 ## Verification of this wave's tree
 

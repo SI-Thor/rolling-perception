@@ -87,3 +87,39 @@ the deltas decide whether it earns the reflective seat.
 (no real JSONLs yet — that lane is still running). When its
 `embeddings_ALL.jsonl` lands, the same runner takes the real candidate set
 with no code change beyond candidate extraction.
+
+## Run — 2026-11-01, after the TypeSafe credential was reconnected
+
+Route B-direct (~/workspace/skills/typesafe/bin/jev.py, custom.typesafe)
+worked immediately. **15/15 calls, zero errors. Latency p50 0.47 s,
+max 0.82 s** — the right order of magnitude for a reflective tier,
+and disqualifying for a reflex tier; the three-speed placement is
+confirmed by the stopwatch.
+
+Scorecard on the 15 curated candidates (3 true changes, 2 raw FPs,
+drift + background negatives), ground truth from the fixture:
+
+| decider | precision | recall |
+|---|---|---|
+| raw system | 0.600 | 1.000 |
+| refined (sheaf) alone | **1.000** | **1.000** |
+| Jev alone | 0.750 | 1.000 |
+| Jev as tie-breaker in band [0.15, 0.60] | 0.750 | 1.000 |
+| Jev as gate (refined AND Jev) | 1.000 | 1.000 |
+
+Jev agreed with the refined pipeline on 14/15. It never doubted a
+true change (p 0.88–0.92 on all three) and correctly rejected one
+of the two spike FPs. Its one error: frame 6 tile 9 — the spike's
+return edge (raw 0.352, near-zero pixel diff) — believed at p=0.61,
+where the sheaf step had already (correctly) said no.
+
+**Verdict, by the project's own rule (the seat is earned by the
+delta): Jev does not earn the gate, and as tie-breaker it made this
+set worse (1.000 → 0.750).** What fixed the FPs was the sheaf
+refine, not the judge. The seat Jev does earn on this evidence:
+**recorded advisor** — its probability rides in the verdict as a
+second opinion, surfaced rather than thresholded; a 0.61 on a
+borderline tile is information, and hardening it into a yes was
+the error. n=15, curated to be hard — a bigger, duller candidate
+stream is the honest next measurement, not a bigger claim.
+Raw run: `jev_verdicts.jsonl`.
