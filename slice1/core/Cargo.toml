@@ -1,0 +1,14 @@
+[package]
+name = "confluence-watch"
+version = "0.1.0"
+edition = "2021"
+description = "Confluence Slice 1 core: LIVE harbor-watch. A phone (or replay) frame source is tiled and diff-gated by the ingest, nominated tiles are embedded by the Thor's JEV rack (I-JEPA), and the harbor-watch cascade (perceive -> decide -> direct -> refine -> publish, on rolling-substrate-core rings) runs incrementally, frame by frame, publishing verdicts to a per-stream text ledger (lens.txt / state.txt / events.jsonl / health.txt)."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+harbor-watch = { path = "../../crates/harbor-watch" }
+rolling-substrate-core = { path = "../../crates/rolling-substrate-core" }
+
+[[bin]]
+name = "confluence-watch"
+path = "src/main.rs"

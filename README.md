@@ -33,10 +33,10 @@ From the **repository root**:
 
 ```sh
 cargo test --release
-# expect: 52 passed total — 6 (rolling-perception) + 23 (rolling-substrate-core)
+# expect: 55 passed total — 6 (rolling-perception) + 23 (rolling-substrate-core)
 #         + 6 (rolling-pipeline: 3 unit + 3 integration) + 6 (rolling-adaptive)
 #         + 3 (cuda-thor CPU reference; its GPU tests need the Thor, see crates/cuda-thor)
-#         + 8 (harbor-watch, the wave-3 real-workload crate)
+#         + 8 (harbor-watch, the wave-3 real-workload crate) + 3 (slice1/core: confluence-watch live service)
 
 cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
 # expect two lines (batched, rolling) ending with:
@@ -46,7 +46,7 @@ cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
 ```
 
 Scope, because the same words do different things in different folders:
-`cargo test` at the root tests **all** crates (52 tests); inside
+`cargo test` at the root tests **all** crates (55 tests); inside
 `crates/rolling-perception/` it tests 6; inside
 `crates/rolling-substrate-core/` it tests 23. `cargo run` needs
 `-p rolling-perception` at the root (or run it from that crate's folder).

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluence — what changed</title>
+<style>
+  :root { --bg:#101418; --card:#1a2129; --line:#2b3644; --txt:#e8eef4; --dim:#9db2c3;
+          --accent:#57b6ff; --amber:#ffb02e; --red:rgba(255,64,48,.42); }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:15px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding:14px 20px 6px; display:flex; justify-content:space-between; align-items:baseline; }
+  h1 { font-size:20px; margin:0; } h2 { font-size:15px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:22px 20px 10px; }
+  .sub { color:var(--dim); font-size:13px; }
+  main { max-width:1180px; margin:0 auto; padding-bottom:40px; }
+  .feed { display:flex; flex-direction:column; gap:12px; padding:0 20px; }
+  .event { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; display:flex; gap:14px; }
+  .event .meta { min-width:170px; }
+  .event .when { color:var(--dim); font-size:13px; }
+  .event .line { font-size:16px; margin:2px 0; }
+  .event .detail { color:var(--dim); font-size:13px; }
+  .framewrap { position:relative; width:260px; max-width:45vw; flex:none; }
+  .framewrap img { width:100%; display:block; border-radius:6px; }
+  .tile { position:absolute; background:var(--red); border:1px solid rgba(255,90,70,.9); }
+  button.correct { background:none; border:1px solid var(--line); color:var(--dim); border-radius:6px;
+                   padding:5px 10px; cursor:pointer; font-size:13px; margin-top:8px; }
+  button.correct:hover { color:var(--txt); border-color:var(--dim); }
+  button.correct.done { color:#7ddc8a; border-color:#7ddc8a; cursor:default; }
+  .empty { color:var(--dim); padding:10px 20px; }
+  .shelf { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; padding:0 20px; }
+  .item { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; }
+  .item img { width:100%; height:120px; object-fit:cover; display:block; background:#0a0e12; }
+  .item .noimg { height:120px; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:28px; background:#0a0e12; }
+  .item .t { padding:8px 10px 2px; font-size:14px; }
+  .item .p { padding:0 10px 9px; color:var(--dim); font-size:12px; }
+  .health { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; padding:0 20px; }
+  .hcard { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .hcard.stale { border-color:var(--amber); }
+  .hcard .name { font-weight:600; }
+  .hcard .badge { float:right; font-size:12px; padding:2px 8px; border-radius:20px; background:#23402a; color:#7ddc8a; }
+  .hcard.stale .badge { background:#40330f; color:var(--amber); }
+  .hcard .row { color:var(--dim); font-size:13px; margin-top:3px; }
+  .hcard .row b { color:var(--txt); font-weight:600; }
+  #viewer { position:fixed; inset:0; background:rgba(0,0,0,.88); display:none; align-items:center; justify-content:center; z-index:9; }
+  #viewer.open { display:flex; }
+  #viewer img, #viewer video { max-width:92vw; max-height:88vh; border-radius:8px; }
+  #viewer .close { position:absolute; top:16px; right:22px; color:#fff; font-size:26px; cursor:pointer; background:none; border:none; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Confluence</h1><div class="sub">Watch this for me. Tell me what changed. Otherwise, silence.</div></div>
+  <div class="sub" id="stamp">loading…</div>
+</header>
+<main>
+  <h2>What changed</h2>
+  <div class="feed" id="feed"><div class="empty">No data yet.</div></div>
+  <h2>Library shelf</h2>
+  <div class="shelf" id="shelf"><div class="empty">No data yet.</div></div>
+  <h2>Stream health</h2>
+  <div class="health" id="health"><div class="empty">No data yet.</div></div>
+</main>
+<div id="viewer"><button class="close" onclick="closeViewer()">×</button><div id="viewerBody"></div></div>
+<script>
+const $ = id => document.getElementById(id);
+function esc(s){ const d=document.createElement('div'); d.textContent = s==null?'':String(s); return d.innerHTML; }
+function fmtTs(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleString(); }
+function fmtAge(s){ if(s==null) return 'never'; if(s<90) return Math.round(s)+'s ago'; if(s<5400) return Math.round(s/60)+' min ago'; return (s/3600).toFixed(1)+' h ago'; }
+
+function renderFeed(feed){
+  if(!feed.length){ $('feed').innerHTML = '<div class="empty">No change events yet — silence, as specified.</div>'; return; }
+  $('feed').innerHTML = feed.map(ev => {
+    const tiles = (ev.tiles||[]).map(t =>
+      `<div class="tile" style="left:${(t%4)*25}%;top:${Math.floor(t/4)*25}%;width:25%;height:25%"></div>`).join('');
+    const img = ev.image ? `<div class="framewrap"><img src="/files/${encodeURI(ev.image)}" alt="">${tiles}</div>` : '';
+    const bits = [];
+    if(ev.score!=null) bits.push('score ' + Number(ev.score).toFixed(2));
+    if(ev.jev_p!=null) bits.push('advisor p=' + Number(ev.jev_p).toFixed(2));
+    if(ev.frame!=null) bits.push('frame ' + ev.frame);
+    return `<div class="event">${img}<div class="meta">
+      <div class="when">${esc(fmtTs(ev.ts))} · ${esc(ev.stream)}</div>
+      <div class="line">${esc(ev.line)}</div>
+      <div class="detail">${esc(bits.join(' · '))}</div>
+      <button class="correct" data-ev='${esc(JSON.stringify({stream:ev.stream, event_id:ev.id, frame:ev.frame, tiles:ev.tiles}))}'>That wasn't a change</button>
+    </div></div>`;
+  }).join('');
+  document.querySelectorAll('button.correct').forEach(b => b.addEventListener('click', async () => {
+    const payload = JSON.parse(b.dataset.ev);
+    const r = await fetch('/api/correct', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    if(r.ok){ b.textContent = 'Recorded — thank you'; b.classList.add('done'); b.disabled = true; }
+    else { b.textContent = 'Could not record — try again'; }
+  }));
+}
+
+function renderShelf(items){
+  if(!items.length){ $('shelf').innerHTML = '<div class="empty">The shelf is empty — no media found yet.</div>'; return; }
+  $('shelf').innerHTML = items.map(it => {
+    const visual = it.poster ? `<img src="/files/${encodeURI(it.poster)}" alt="">`
+      : (it.type !== 'video' ? `<img src="/files/${encodeURI(it.src)}" alt="">` : `<div class="noimg">▶</div>`);
+    return `<div class="item" data-src="${esc(it.src)}" data-type="${esc(it.type)}">${visual}
+      <div class="t">${esc(it.title)}</div><div class="p">${esc(it.type)} · ${esc(it.perception)}</div></div>`;
+  }).join('');
+  document.querySelectorAll('.item').forEach(el => el.addEventListener('click', () => openViewer(el.dataset.src, el.dataset.type)));
+}
+
+function renderHealth(streams){
+  if(!streams.length){ $('health').innerHTML = '<div class="empty">No streams in the ledger yet.</div>'; return; }
+  $('health').innerHTML = streams.map(s => { const h = s.health; const stale = h.stale;
+    return `<div class="hcard ${stale?'stale':''}">
+      <span class="badge">${stale ? 'NOT REPORTING' : 'LIVE'}</span>
+      <div class="name">${esc(s.id)}</div>
+      <div class="row">${esc(h.state_line)}</div>
+      <div class="row">Heartbeat: <b>${esc(fmtAge(h.heartbeat_age_s))}</b>${stale ? ' — no news is not good news; check this stream' : ''}</div>
+      <div class="row">Embed spend: <b>${esc(h.embed_spent ?? '—')}</b> of budget <b>${esc(h.budget ?? '—')}</b></div>
+      <div class="row">Coverage: <b>${esc(h.coverage ?? '—')}</b> · embed p50/p99: <b>${esc(h.embed_p50_ms ?? '—')}</b>/<b>${esc(h.embed_p99_ms ?? '—')}</b> ms</div>
+      <div class="row">Events published: <b>${s.events}</b></div>
+    </div>`; }).join('');
+}
+
+function openViewer(src, type){
+  $('viewerBody').innerHTML = type === 'video'
+    ? `<video src="/files/${encodeURI(src)}" controls autoplay></video>`
+    : `<img src="/files/${encodeURI(src)}" alt="">`;
+  $('viewer').classList.add('open');
+}
+function closeViewer(){ $('viewer').classList.remove('open'); $('viewerBody').innerHTML=''; }
+$('viewer').addEventListener('click', e => { if(e.target.id==='viewer') closeViewer(); });
+
+async function refresh(){
+  try {
+    const s = await (await fetch('/api/state')).json();
+    renderFeed(s.feed); renderShelf(s.shelf); renderHealth(s.streams);
+    $('stamp').textContent = 'Ledger ' + s.ledger + ' · updated ' + new Date(s.generated*1000).toLocaleTimeString();
+  } catch(e) { $('stamp').textContent = 'Console cannot reach its own backend — not a silent state.'; }
+}
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
