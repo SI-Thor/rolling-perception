@@ -44,6 +44,10 @@ Config (env):
                  in the digest as a NOT REPORTING line, in words.
   PRESENCE_HISTORY_TURNS default 4 — recent exchanges ride in the
                  prompt so follow-ups ("What colour is it?") resolve.
+  PRESENCE_BRAIN_STUB_FILE test-only hook: when set, ask_brain
+                 returns the file's contents instead of calling the
+                 brain (re-read per call, so a harness can force
+                 adversarial brain outputs — see acceptance_v3.py).
   PIPER_BIN      default ~/radio-room-thor/.venv/bin/piper
   PIPER_VOICE    default ~/radio-room-thor/voices/en_US-lessac-medium.onnx
   WHISPER_MODEL  default tiny.en (already in the HF cache on the Thor)
@@ -72,6 +76,8 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
+
+import claims as claim_check_mod
 
 HOME = Path.home()
 PORT = int(os.environ.get("PRESENCE_PORT", "8330"))
@@ -191,11 +197,16 @@ def ledger_digest():
       (quote-only; enforced by grounding_check).
 
     Returns (text, meta) where meta = {"ids": [...], "numbers": set
-    of float values present in the digest, "not_reporting": [...]}.
+    of float values present in the digest, "not_reporting": [...],
+    "streams": [...], "stream_states": {name: {"reporting": bool,
+    "age_words": str}}} — the states are the v3 claim checker's
+    ground truth (claims.py): computed HERE, from heartbeat ages,
+    never taken from the brain's words.
     """
     lines = []
     ids = []
     not_reporting = []
+    stream_states = {}
     streams_dir = LEDGER_DIR / "streams"
     stream_names = []
     if streams_dir.is_dir():
@@ -222,7 +233,11 @@ def ledger_digest():
                          f"{age_words}")
             not_reporting.append(name)
         else:
-            lines.append(f"{name}: heartbeat {_human_age(age)}")
+            age_words = _human_age(age)
+            lines.append(f"{name}: heartbeat {age_words}")
+        stream_states[name] = {
+            "reporting": name not in not_reporting,
+            "age_words": age_words}
         if "embed_p50_ms" in health:
             hline = f"{name} health: embed p50 {health['embed_p50_ms']} ms"
             if "queue_depth" in health:
@@ -272,7 +287,9 @@ def ledger_digest():
         except ValueError:
             pass
     return text, {"ids": ids, "numbers": numbers,
-                  "not_reporting": not_reporting}
+                  "not_reporting": not_reporting,
+                  "streams": stream_names,
+                  "stream_states": stream_states}
 
 
 # ---------- grounding: brevity + the cheap self-check --------------------
@@ -356,6 +373,14 @@ def transcribe(audio):
 
 
 def ask_brain(transcript, digest):
+    stub = os.environ.get("PRESENCE_BRAIN_STUB_FILE")
+    if stub:  # test hook: force a brain output (acceptance_v3 traps)
+        try:
+            forced = Path(stub).read_text().strip()
+            if forced:
+                return forced
+        except OSError:
+            pass
     hist = ""
     if HISTORY_TURNS > 0 and _history:
         turns = "\n".join(f"Person: {q}\nConfluence: {a}"
@@ -551,6 +576,11 @@ def health():
             "brain_max_tokens": BRAIN_MAX_TOKENS,
             "digest": "v2 (verdict-only, NOT REPORTING in words, "
                       "quote-only numbers)",
+            "claim_checker": "v3 (claims.py: stream-state claims + "
+                             "entity references fenced against "
+                             "computed stream states; failed "
+                             "sentences replaced with template "
+                             "truths before TTS)",
             "stale_tolerance_s": STALE_TOLERANCE_S,
             "history_turns_kept": len(_history),
             "ledger_dir": str(LEDGER_DIR),
@@ -586,11 +616,19 @@ async def hear(audio: UploadFile = File(...)):
     reply_raw = ask_brain(transcript, digest)
     timings["brain_ms"] = round((time.perf_counter() - t0) * 1000)
 
-    # Grounding pipeline, all outside the model: trim to spoken size,
-    # self-check ids + numbers against the digest, replace on
-    # violation. Citations stay in the written reply (and the page);
-    # the spoken text drops the brackets — nobody talks in [ids].
+    # Grounding pipeline, all outside the model (v3): trim to spoken
+    # size, then the CLAIM CHECKER fences the prose v2 couldn't —
+    # stream-state claims checked against the digest's computed
+    # stream states, entity misuse (event id as stream, stream name
+    # as event, unknown stream) — failed sentences are replaced with
+    # template truths BEFORE TTS, violations logged with the original
+    # sentence quoted. Then the v2 self-check (ids + numbers) runs on
+    # the claim-checked text and still replaces wholesale on a miss.
+    # Citations stay in the written reply (and the page); the spoken
+    # text drops the brackets — nobody talks in [ids].
     reply, trimmed = trim_reply(reply_raw)
+    reply_pre_claims = reply
+    reply, claim_violations = claim_check_mod.check_claims(reply, meta)
     violation = grounding_check(reply, meta, transcript)
     replaced = violation is not None
     if replaced:
@@ -609,11 +647,14 @@ async def hear(audio: UploadFile = File(...)):
     stats = wav_stats(wav_bytes)
     timings["total_ms"] = round((time.perf_counter() - t_start) * 1000)
     grounding = {"violation": violation, "replaced": replaced,
+                 "claim_violations": claim_violations,
+                 "claims_replaced": bool(claim_violations),
                  "trimmed": trimmed, "cited_ids": cited,
                  "digest_ids": meta["ids"],
                  "not_reporting": meta["not_reporting"]}
     receipt({"ts": round(time.time(), 1), "transcript": transcript,
              "reply": reply, "reply_raw": reply_raw,
+             "reply_pre_claims": reply_pre_claims,
              "grounding": grounding,
              "timings_ms": timings, "audio": stats,
              "whisper_load_s": _whisper_load_s})

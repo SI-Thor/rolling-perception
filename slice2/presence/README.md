@@ -217,3 +217,102 @@ never touched; every SIGTERM in this story was thor-admit's
 guard acting on this lane's own unleased launches. Test
 deployments used `~/confluence-play/slice2/app-v2/` and scratch
 ports 8310–8332, all stopped and verified free at the end.
+
+## Presence v3 — the claim checker (2026-11-01)
+
+v2 fenced ids and numbers; its two residuals were prose-shaped:
+a false staleness claim in plain words ("The porch-cam is not
+reporting", said of a fresh stream) and an event id used loosely
+as a stream reference. v3 fences both mechanically, the same
+way: `claims.py` (stdlib-only, deterministic) runs in /hear
+between trim and the v2 id/number check, verifying every
+CHECKABLE claim in the reply against the digest's computed
+stream states (which `ledger_digest` now exports as meta:
+`streams` + `stream_states`). Nothing is judged by a model.
+
+**Checker rules.**
+- *Stream-state claims.* A sentence asserting a stream is/isn't
+  reporting, healthy, down, silent… is checked against that
+  stream's computed state. Attribution is **clause-local**: the
+  sentence is split on commas/semicolons and contrastive
+  conjunctions (but/while/whereas/yet); a mention takes the
+  nearest state predicate in its own clause, and a clause with
+  no state predicate makes no state claim.
+- *Entity references.* A bracketed citation naming a stream
+  (stream-name-as-event), a bare event id carrying a stream
+  predicate with no stream in its clause (event-id-as-stream),
+  and a state claim about a "-cam" name the digest doesn't
+  carry (unknown stream).
+- *False calm.* "Everything is normal / all cameras are fine"
+  while any stream is NOT REPORTING (sentence not itself
+  negated).
+- *Replacement.* A failed sentence is replaced, before TTS,
+  with the template truth — "The porch-cam is reporting
+  normally." / "The dock-cam is not reporting — last heartbeat
+  2 hours ago." (truths for every stream the sentence claimed
+  about) — or the safe template for referentially broken
+  sentences. Each violation lands in the receipts with the
+  original sentence quoted; the receipt's `reply` field is
+  exactly what the TTS stage speaks, so a corrected receipt is
+  proof the corrected text is what was said. Correct claims
+  pass byte-identical.
+
+**Unit tests** (`test_claims.py`, runs anywhere): **23/23** —
+the two v2 residuals, invented traps for every class, correct
+claims (incl. a true mixed sentence and the battery's own (f)
+answer) passing untouched.
+
+**Stub-fed traps** (`acceptance_v3.py`, Part 3): a test hook
+(`PRESENCE_BRAIN_STUB_FILE`, re-read per call) forces adversarial
+brain outputs through the full /hear loop. **8/8 caught and
+replaced before TTS** (receipt `reply` = corrected text,
+`reply_raw` = the trap, audio non-silent); **2/2 correct
+controls passed byte-identical** with zero claim violations:
+
+| forced brain output | spoken instead | violation |
+|---|---|---|
+| The porch-cam is not reporting. | The porch-cam is reporting normally. | false_stale_claim |
+| Dock-cam-41 is not reporting. | I don't have a record of that. | event_id_as_stream |
+| The phone-cam is not reporting. | The phone-cam is reporting normally. | false_stale_claim |
+| The dock-cam is reporting normally. | The dock-cam is not reporting — last heartbeat 2.0 hours ago. | false_healthy_claim |
+| The phone-cam-12 camera is down. | I don't have a record of that. | event_id_as_stream |
+| [porch-cam] shows no changes reported. | I don't have a record of that. | stream_name_as_event |
+| The garage-cam is not reporting. | I don't have a record of that. | unknown_stream |
+| Everything is calm and normal right now. | The dock-cam is not reporting — last heartbeat 2.0 hours ago. | false_calm |
+
+**Battery, reported as run — twice.** The v2 seven questions
+were run through the full loop with the winner brain leased
+(and released) in both runs; the v1 rerun stayed green both
+times (overlap 1.0). Neither run reached v2's 7/7, and both
+failures sit at the STT→brain seam, not in the checker:
+
+- *Run 1: 6/7.* (c) failed because whisper-tiny transcribed
+  the embed question as "Hello, I'm Mar the camera in Bed's
+  taking right now" — no figures were ever produced. The brain
+  then fabricated a stream from the garble ("The bed-cam is
+  not reporting") and **the checker caught it live**
+  (unknown_stream → safe template) — the fence's first wild
+  catch. (f) exposed a checker bug: nearest-predicate-in-
+  sentence attribution fenced the brain's TRUE sentence "The
+  porch-cam shows no changes, but the dock-cam is not
+  reporting…" as a false porch claim. Fixed by clause-local
+  attribution (above), with the sentence added to the unit
+  tests verbatim.
+- *Run 2 (fixed checker): 6/7.* Zero claim violations across
+  all seven answers — the checker touched nothing. (c) passed,
+  quoting 173 and 181 exactly; (f) passed unfenced. (a)
+  failed: whisper heard "the dark camera", the brain echoed
+  the mangled name and never reached for the toolbox event —
+  the failure is present verbatim in `reply_raw`, upstream of
+  every fence. Rotating (c)-then-(a) failures across runs,
+  both from whisper-tiny's known "dock"→dot/dark garbling
+  (recorded in v2), are the battery's current noise floor;
+  v3 claims no battery improvement and no battery regression.
+
+Deployments used `~/confluence-play/slice2/app-v3/`, scratch
+ports 8312–8333, winner leased on 8321 via brain-server.sh and
+released after each run (unit verified inactive). At finish:
+no app-v3 processes, no piper workers, stub file removed, the
+Slice-1 soak untouched and alive. (Port 8321 was re-taken after
+run 2 by the Slice-1 console's app.py — not this lane's
+process; identified read-only and left alone.)
