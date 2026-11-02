@@ -77,7 +77,11 @@ HOME = Path.home()
 PORT = int(os.environ.get("PRESENCE_PORT", "8330"))
 LEDGER_DIR = Path(os.environ.get(
     "LEDGER_DIR", HOME / "confluence-play/slice1/run/ledger"))
-BRAIN_URL = os.environ.get("BRAIN_URL", "http://127.0.0.1:8001")
+BRAIN_URL = os.environ.get("BRAIN_URL", "http://127.0.0.1:8310")
+BRAIN_MAX_TOKENS = int(os.environ.get("BRAIN_MAX_TOKENS", "64"))
+STALE_TOLERANCE_S = int(os.environ.get("STALE_TOLERANCE_S", "90"))
+HISTORY_TURNS = int(os.environ.get("PRESENCE_HISTORY_TURNS", "4"))
+SAFE_REPLY = "I don't have a record of that."
 PIPER_BIN = os.environ.get(
     "PIPER_BIN", str(HOME / "radio-room-thor/.venv/bin/piper"))
 PIPER_VOICE = os.environ.get(
@@ -95,14 +99,25 @@ PAGE = Path(__file__).with_name("index.html")
 PERSONA = (
     "You are Confluence, the house system, sitting at the table. "
     "You watch the house's cameras and library and report what changed. "
-    "Answer in plain spoken words, one to three short sentences, no "
-    "lists, no markdown. Use only the ledger facts you are given. "
-    "If nothing changed, say so plainly."
+    "Answer in plain spoken words, at most two short sentences, no "
+    "lists, no markdown. You are the voice of records the system has "
+    "already published; you never search and never invent. "
+    "Grounding rules: (1) Refer to a camera event only by choosing "
+    "its record id, written in brackets like [dock-cam-41], from the "
+    "records below. (2) State a number only if it appears exactly in "
+    "the records below; never invent, estimate, or round a number. "
+    "(3) A record line that says NOT REPORTING means that camera is "
+    "not watching: say so plainly, and never call the house calm or "
+    "normal while any camera is not reporting. (4) If no record "
+    "covers the question, say exactly: I don't have a record of that. "
+    "Health claims come only from the record lines below."
 )
 
 _whisper = None
 _whisper_load_s = None
 _brain_model = None
+_history = deque(maxlen=max(HISTORY_TURNS, 0)) if HISTORY_TURNS > 0 \
+    else deque(maxlen=1)
 
 
 def get_whisper():
@@ -144,24 +159,77 @@ def _read_kv(path):
     return out
 
 
+_NUM_RE = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?![\w])")
+
+
+def _human_age(age_s):
+    """Seconds -> spoken words ('14 seconds ago', '2 hours ago').
+    The bench's core lesson: models do not do seconds->hours
+    arithmetic as a side effect of reading; the digest does it."""
+    if age_s < 90:
+        return f"{age_s} second{'s' if age_s != 1 else ''} ago"
+    if age_s < 5400:
+        m = max(1, round(age_s / 60))
+        return f"{m} minute{'s' if m != 1 else ''} ago"
+    h = age_s / 3600.0
+    hs = str(int(h)) if h == int(h) else str(round(h, 1))
+    return f"{hs} hour{'s' if hs != '1' else ''} ago"
+
+
 def ledger_digest():
+    """Digest v2 — verdict-only grounding (Panel 2 Q1) plus the brain
+    bench's two digest disciplines:
+
+    * Staleness is pre-computed into words: a stream whose heartbeat
+      exceeds its lens tolerance (lens.txt heartbeat_tolerance_s, else
+      STALE_TOLERANCE_S) renders as a literal NOT REPORTING line; the
+      brain is never handed a raw age and asked to judge calm.
+    * Events enter ONLY as published verdict records carrying ids;
+      the brain references an event by selecting its id (the backend
+      self-check enforces this — see grounding_check).
+    * Health numbers are template-rendered verbatim from health.txt
+      (quote-only; enforced by grounding_check).
+
+    Returns (text, meta) where meta = {"ids": [...], "numbers": set
+    of float values present in the digest, "not_reporting": [...]}.
+    """
     lines = []
+    ids = []
+    not_reporting = []
     streams_dir = LEDGER_DIR / "streams"
     stream_names = []
     if streams_dir.is_dir():
         stream_names = sorted(p.name for p in streams_dir.iterdir() if p.is_dir())
     for name in stream_names:
         sdir = streams_dir / name
+        lens = _read_kv(sdir / "lens.txt")
+        try:
+            tol = int(float(lens.get("heartbeat_tolerance_s",
+                                     STALE_TOLERANCE_S)))
+        except (TypeError, ValueError):
+            tol = STALE_TOLERANCE_S
         health = _read_kv(sdir / "health.txt")
+        age = None
         hb = health.get("heartbeat_ts")
         if hb:
             try:
                 age = max(0, int(time.time() - float(hb)))
-                lines.append(f"{name}: heartbeat {age}s ago"
-                             + (f", embed p50 {health['embed_p50_ms']} ms"
-                                if "embed_p50_ms" in health else ""))
             except ValueError:
-                pass
+                age = None
+        if age is None or age > tol:
+            age_words = "never" if age is None else _human_age(age)
+            lines.append(f"NOT REPORTING — {name}, last heartbeat "
+                         f"{age_words}")
+            not_reporting.append(name)
+        else:
+            lines.append(f"{name}: heartbeat {_human_age(age)}")
+        if "embed_p50_ms" in health:
+            hline = f"{name} health: embed p50 {health['embed_p50_ms']} ms"
+            if "queue_depth" in health:
+                hline += f", queue depth {health['queue_depth']}"
+            if name in not_reporting:
+                hline += " (last measured before it stopped reporting)"
+            lines.append(hline)
         state = _read_kv(sdir / "state.txt")
         if state.get("state"):
             lines.append(f"{name} state: {state['state']}")
@@ -176,8 +244,11 @@ def ledger_digest():
                     verdicts.append(row)
         except OSError:
             pass
-        for v in verdicts[-3:]:
-            lines.append(f"{name} event: {v['line']} "
+        for i, v in enumerate(verdicts[-3:]):
+            eid = str(v.get("id") or
+                      f"{name}-{v.get('tick', v.get('frame', i))}")
+            ids.append(eid)
+            lines.append(f"[{eid}] {name} event: {v['line']} "
                          f"(score {v.get('score', '?')})")
         if not verdicts:
             lines.append(f"{name}: no changes reported")
@@ -193,7 +264,73 @@ def ledger_digest():
                 titles.append(first)
         if titles:
             lines.append("On the library shelf: " + "; ".join(titles))
-    return "\n".join(lines) if lines else "The ledger is empty."
+    text = "\n".join(lines) if lines else "The ledger is empty."
+    numbers = set()
+    for tok in _NUM_RE.findall(text):
+        try:
+            numbers.add(float(tok))
+        except ValueError:
+            pass
+    return text, {"ids": ids, "numbers": numbers,
+                  "not_reporting": not_reporting}
+
+
+# ---------- grounding: brevity + the cheap self-check --------------------
+# Panel 2 Q1's self-check is string matching, not a judge: a cited id
+# not in the digest, or a spoken number in no record, means the reply
+# is not spoken — it is replaced with the safe template and the
+# violation is logged in the receipts. Brevity is enforced here too,
+# outside the model (the winner writes briefings; TTS time is scarce).
+
+def trim_reply(text, max_sentences=2, max_words=45):
+    """Cap a reply at ~2 sentences / 45 words, cutting at a sentence
+    boundary whenever one exists inside the budget."""
+    text = " ".join(text.split())
+    if not text:
+        return text, False
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s]
+    kept, words = [], 0
+    for s in sentences:
+        w = len(s.split())
+        if kept and (len(kept) >= max_sentences or words + w > max_words):
+            break
+        kept.append(s)
+        words += w
+        if len(kept) >= max_sentences or words >= max_words:
+            break
+    out = " ".join(kept) if kept else text
+    if len(out.split()) > max_words:  # one long sentence: hard cut
+        out = " ".join(out.split()[:max_words]).rstrip(",;:") + "."
+    return out, out != text
+
+
+def grounding_check(reply, meta, transcript):
+    """Return a violation dict, or None if the reply is grounded.
+    Allowed numbers: any number rendered in the digest, plus any
+    number the person themselves just said. Allowed ids: exactly the
+    verdict ids the digest carried."""
+    cited = [c.strip() for c in re.findall(r"\[([^\]]+)\]", reply)]
+    cited += [t for t in re.findall(
+        r"\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+-\d+\b", reply)
+        if t not in cited]
+    for cid in cited:
+        if cid not in meta["ids"]:
+            return {"type": "unknown_id", "value": cid, "cited": cited}
+    allowed = set(meta["numbers"])
+    for tok in _NUM_RE.findall(transcript or ""):
+        try:
+            allowed.add(float(tok))
+        except ValueError:
+            pass
+    for tok in _NUM_RE.findall(reply):
+        try:
+            val = float(tok)
+        except ValueError:
+            continue
+        if val not in allowed:
+            return {"type": "unknown_number", "value": tok,
+                    "cited": cited}
+    return None
 
 
 # ---------- stages --------------------------------------------------------
@@ -219,14 +356,21 @@ def transcribe(audio):
 
 
 def ask_brain(transcript, digest):
-    user = (f"House ledger, latest:\n{digest}\n\n"
+    hist = ""
+    if HISTORY_TURNS > 0 and _history:
+        turns = "\n".join(f"Person: {q}\nConfluence: {a}"
+                          for q, a in _history)
+        hist = f"Earlier at the table:\n{turns}\n\n"
+    user = (f"House records, latest:\n{digest}\n\n"
+            f"{hist}"
             f"The person at the table asks: {transcript}\n"
-            f"Answer briefly from the ledger.")
+            f"Answer briefly from the records, citing the record id "
+            f"in brackets when you mention an event.")
     payload = {
         "model": get_brain_model(),
         "messages": [{"role": "system", "content": PERSONA},
                      {"role": "user", "content": user}],
-        "max_tokens": 120, "temperature": 0.3,
+        "max_tokens": BRAIN_MAX_TOKENS, "temperature": 0.3,
     }
     req = urllib.request.Request(
         BRAIN_URL + "/v1/chat/completions",
@@ -401,7 +545,15 @@ def page():
 @app.get("/health")
 def health():
     return {"ok": True, "service": "confluence-presence",
-            "brain_url": BRAIN_URL, "ledger_dir": str(LEDGER_DIR),
+            "brain_url": BRAIN_URL,
+            "brain_default": "Qwen3-Coder-30B-A3B-Instruct Q4_K_M "
+                             "(brain-server.sh); fallback LFM2-1.2B",
+            "brain_max_tokens": BRAIN_MAX_TOKENS,
+            "digest": "v2 (verdict-only, NOT REPORTING in words, "
+                      "quote-only numbers)",
+            "stale_tolerance_s": STALE_TOLERANCE_S,
+            "history_turns_kept": len(_history),
+            "ledger_dir": str(LEDGER_DIR),
             "whisper_model": WHISPER_MODEL,
             "whisper_loaded": _whisper is not None,
             "whisper_load_s": _whisper_load_s,
@@ -427,22 +579,43 @@ async def hear(audio: UploadFile = File(...)):
     timings["stt_ms"] = round((time.perf_counter() - t0) * 1000)
 
     t0 = time.perf_counter()
-    digest = ledger_digest()
+    digest, meta = ledger_digest()
     timings["digest_ms"] = round((time.perf_counter() - t0) * 1000)
 
     t0 = time.perf_counter()
-    reply = ask_brain(transcript, digest)
+    reply_raw = ask_brain(transcript, digest)
     timings["brain_ms"] = round((time.perf_counter() - t0) * 1000)
 
+    # Grounding pipeline, all outside the model: trim to spoken size,
+    # self-check ids + numbers against the digest, replace on
+    # violation. Citations stay in the written reply (and the page);
+    # the spoken text drops the brackets — nobody talks in [ids].
+    reply, trimmed = trim_reply(reply_raw)
+    violation = grounding_check(reply, meta, transcript)
+    replaced = violation is not None
+    if replaced:
+        reply = SAFE_REPLY
+    cited = [c.strip() for c in re.findall(r"\[([^\]]+)\]", reply)]
+    spoken = re.sub(r"\[[^\]]+\]\s*", "", reply).strip() or reply
+
     t0 = time.perf_counter()
-    wav_bytes = speak(reply)
+    wav_bytes = speak(spoken)
     timings["tts_ms"] = round((time.perf_counter() - t0) * 1000)
     timings["tts_path"] = _last_tts_path
 
+    if HISTORY_TURNS > 0:
+        _history.append((transcript, reply))
+
     stats = wav_stats(wav_bytes)
     timings["total_ms"] = round((time.perf_counter() - t_start) * 1000)
+    grounding = {"violation": violation, "replaced": replaced,
+                 "trimmed": trimmed, "cited_ids": cited,
+                 "digest_ids": meta["ids"],
+                 "not_reporting": meta["not_reporting"]}
     receipt({"ts": round(time.time(), 1), "transcript": transcript,
-             "reply": reply, "timings_ms": timings, "audio": stats,
+             "reply": reply, "reply_raw": reply_raw,
+             "grounding": grounding,
+             "timings_ms": timings, "audio": stats,
              "whisper_load_s": _whisper_load_s})
     return JSONResponse({
         "transcript": transcript,
@@ -450,6 +623,7 @@ async def hear(audio: UploadFile = File(...)):
         "reply_audio_b64": base64.b64encode(wav_bytes).decode(),
         "reply_audio_stats": stats,
         "timings_ms": timings,
+        "grounding": grounding,
     })
 
 

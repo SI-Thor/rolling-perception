@@ -52,7 +52,8 @@ default `http://127.0.0.1:8001`; point it at any OpenAI-shaped
 llama.cpp chat endpoint. Acceptance ran against a temporary
 llama-server serving the on-disk LFM2-1.2B GGUF on :8301, started
 for the test and killed after. Casey's tenants were never stopped
-or touched.
+or touched. **v2 changes the default brain and its port — see
+"Presence v2" below.**
 
 ## Run it (on the Thor)
 
@@ -126,3 +127,93 @@ appeared beside the dock door"), synthesises the spoken question
 staged event, and that the reply audio is non-silent plausible
 speech; plus GET / = 200 with the live-indicator marker. Measured
 numbers live in the run output, not in this file.
+
+## Presence v2 — the bench winner, verdict-only grounding (2026-11-01)
+
+Three findings composed into one upgrade: the brain bench's winner,
+its two digest disciplines, and Panel 2 Q1's verdict-only grounding.
+
+**The brain.** Default is now the bench winner,
+**Qwen3-Coder-30B-A3B-Instruct Q4_K_M**, at `BRAIN_URL`
+default `http://127.0.0.1:8310`. **LFM2-1.2B Q8_0 is the named
+fallback** (`brain-server.sh start fallback`) — it serves only
+behind the disciplines below. On this box the brain MUST be
+started under a thor-admit lease: the Thor's admission daemon
+SIGTERMs unleased multi-GB loads as runaways. Three launches of
+the winner died that way during this lane (a script's setsid
+child, a setsid+nohup shell launch, and a systemd user service
+running llama-server directly; the daemon's log records
+`guard.terminated, trigger=runaway, 18.5 GB`). `brain-server.sh`
+wraps the working route:
+
+    brain-server.sh start [winner|fallback] [port]   # default winner, 8310
+    brain-server.sh status [port]
+    brain-server.sh stop [port]                      # releases the lease
+
+It runs `thor-admit serve <Model> --port <n> --peak 24G|4G --
+llama-server …` as a transient systemd user unit (linger on, so
+it survives SSH logout). The first serve of a model needs the
+explicit --peak; the daemon learns the label afterwards. Full
+start→healthy→stop cycle verified with the fallback (healthy in
+~6 s); the winner reached health 200 within ~2 min of its serve
+launch (registry hashing + grant + 18.6 GB load).
+
+**Digest v2** (`ledger_digest` now returns text + grounding meta):
+- *Staleness in words.* A stream whose heartbeat exceeds its lens
+  tolerance (`lens.txt heartbeat_tolerance_s`, else 90 s) renders
+  as a literal line — `NOT REPORTING — dock-cam, last heartbeat
+  2 hours ago` — and health claims may come only from these lines.
+  Ages are humanised by the digest; brains are never handed a raw
+  second count and asked to judge calm.
+- *Numbers are quote-only.* Health figures are template-rendered
+  verbatim from `health.txt`; a NOT REPORTING stream's figure is
+  annotated "(last measured before it stopped reporting)".
+- *Verdict-only grounding.* Events enter only as published
+  verdict records with ids (`[dock-cam-41] …`). The brain refers
+  to an event by selecting its id; a backend self-check (string
+  matching, not a judge) then verifies the reply: every bracketed
+  citation must be a digest id, and every spoken number must
+  appear verbatim in the digest (or in the question itself). On
+  violation the reply is replaced with "I don't have a record of
+  that." and the violation is logged in the receipts. Citations
+  stay in the written reply; the spoken text drops the brackets.
+- *Brevity outside the model.* `max_tokens` 64, plus a
+  post-generation trim to 2 sentences / 45 words at a sentence
+  boundary — the winner writes briefings, and TTS time is the
+  scarce stage. A 4-turn spoken history rides in the prompt so
+  follow-ups resolve ("What colour is it?" → the red toolbox).
+
+**Acceptance** (`acceptance_v2.py`, bench fixture rebuilt as a
+Slice-1 ledger: phone-cam fresh/173 ms, dock-cam 7200 s
+stale/181 ms + the toolbox verdict, porch-cam fresh, the Sitka
+shelf line). All seven turns through the FULL loop (Piper speech
+in, spoken reply out), winner brain leased on a scratch port:
+**7/7 PASS, zero grounding violations, zero replacements, zero
+invented numbers.** (a) toolbox named, cited `[dock-cam-41]`,
+NOT REPORTING led the answer; (b) trick refused in words —
+"not mentioned in the records … no movement of a ladder is
+recorded"; (c) embed figures quoted exactly, "173 ms" and
+"181 ms"; (d) shelf named; (e) follow-up resolved to red via
+history; (f) "The dock-cam is not reporting, so I can't confirm
+if everything is normal" — the bench's cross-model (f) failure,
+fixed by the digest, not the model. Loop totals 2.3–4.3 s per
+turn (brain 0.6–1.1 s, STT 1.1–1.6 s, resident TTS 0.5–1.9 s).
+The **v1 acceptance also stays green against v2 code** (run
+twice; final: transcript overlap 1.0, reply cites the staged
+event, wall 5.07 s) with the LFM2 fallback as its brain.
+
+Two honest residuals, recorded not smoothed: in one (c) answer
+the brain appended "The porch-cam is not reporting" when porch
+was fresh — prose-level staleness claims are NOT fenced by the
+id/number self-check (a v3 could check not-reporting claims
+against digest meta too) — and it once used an event id loosely
+as a stream reference, which passes the check because the id
+exists. Also, whisper-tiny.en hears "dock" as "dark"; the brain
+coped both runs.
+
+Tenancy note: :8295/:8296 were already down when this lane first
+probed (18:04) and are down at its finish — never signalled,
+never touched; every SIGTERM in this story was thor-admit's
+guard acting on this lane's own unleased launches. Test
+deployments used `~/confluence-play/slice2/app-v2/` and scratch
+ports 8310–8332, all stopped and verified free at the end.
