@@ -6,6 +6,14 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — extraction rulings, 2026-11-02
+
+- EXTRACTION-PLAN §10: Casey's five answers recorded — standalone
+  name (not Confluence), new repo with clean history, third-party
+  parts behind seams with bring-your-own docs (never incorporated
+  under restrictive terms), configurable grid with the 4x4 default's
+  measured rationale documented, permissive dual licence confirmed.
+
 ## [Unreleased] — extraction plan for the change-ledger core, 2026-11-02
 
 - docs/EXTRACTION-PLAN.md: the core defined by subtraction (11 IN /

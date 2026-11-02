@@ -756,3 +756,30 @@ anyone asks Casey for the tap; step 9 is the tap.
 `slice2/presence/README.md`. The flagged `docs/WAVE3.md` read was
 not used as a source for any number above; wave-3 figures are
 cited from `docs/RESULTS.md` and the slice records.*
+
+---
+
+## 10. RULINGS (Casey, 2026-11-02 12:54 AKST — answers to §6)
+
+1. **Name:** the standalone tool gets a standalone name — not
+   Confluence, not confluence-watch. (Name itself: Casey's to
+   pick from candidates; the build proceeds under a working
+   title.)
+2. **Repo home:** NEW repo, clean history. "Keep things clean
+   and new." The §9 scrub steps apply to any material carried
+   over; nothing inherits the old history.
+3. **Third-party licence posture:** the tool must not be limited
+   by another party's licence. Where the best part carries
+   restrictive terms (the I-JEPA case), the part is NOT
+   incorporated into our code or distribution: the seam ships,
+   the docs explain how to move the best part in, the user
+   brings it under their own terms. The shipped default path
+   is licence-clean and fully usable.
+4. **Grid:** configurable — with documentation of WHY 4x4 was
+   the default (the measured record behind the choice ships
+   as part of the docs, so a user who changes it knows what
+   they are trading).
+5. **Our licence:** permissive, confirmed. Others may use it
+   in all ways, build on it, and make it better — we benefit
+   from their improvements and innovations. MIT OR Apache-2.0
+   dual, as already in the tree.
