@@ -138,11 +138,11 @@ def make_poster(src, dur, dest, width, height):
                         "-f", "rawvideo", "-y", str(raw)],
                        capture_output=True, timeout=60)
         try:
-            if not raw.exists() or raw.stat().st_size < width * height * 3 // 2:
+            if not raw.exists() or raw.stat().st_size != width * height * 3 // 2:
                 continue
             buf = np.fromfile(raw, dtype=np.uint8)
             y = buf[:width * height].reshape(height, width).astype(np.float32)
-            uv = buf[width * height:width * height * 5 // 4].reshape(height // 2, width)
+            uv = buf[width * height:].reshape(height // 2, width)
             u = uv[:, 0::2].repeat(2, axis=0).repeat(2, axis=1).astype(np.float32) - 128
             v = uv[:, 1::2].repeat(2, axis=0).repeat(2, axis=1).astype(np.float32) - 128
             yy = (y - 16) * 1.164

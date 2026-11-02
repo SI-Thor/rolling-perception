@@ -115,12 +115,13 @@ class TestToleranceAndExceedance(unittest.TestCase):
                                self.lens.stale_threshold)
 
 
-def warmed_engine(lens, snap_k=None, n=40):
+def warmed_engine(lens, snap_k=None, n=40, decontam=None):
     """An engine warmed on wobbly constant-velocity motion (vx ~ +3)
     until sigma_r has settled to the wobble level (~0.04). Returns
     (engine, t_last, x_last)."""
     e = EngineObject("t")
     e.snap_k = snap_k
+    e.decontam = decontam
     t = x = 0.0
     for i in range(n):
         t = i * 0.5
@@ -173,6 +174,85 @@ class TestSnapRule(unittest.TestCase):
         e.correct(t_last + 2.0, z_gap - 1.5, 0.0, self.lens)
         self.assertEqual(e.n_snaps, 1)
         self.assertAlmostEqual(e.vx, -3.0, delta=0.2)
+
+
+class TestDecontamination(unittest.TestCase):
+    """SNAP2: a snap-grade residual is a regime change, not a sample
+    of the error distribution — it must not inflate the band its
+    successors are judged by (the v1 snap flaw: one fire at 3x,
+    then the contaminated band grades the follow-on at ~2x and the
+    snap never re-fires)."""
+
+    def setUp(self):
+        self.lens = fed_lens([0.5] * 30)   # threshold exactly 0.5
+
+    def test_variantA_excludes_firing_and_followon_residuals(self):
+        e, t_last, x_last = warmed_engine(self.lens, snap_k=3.0,
+                                          decontam="A")
+        pre = e.resid_ms
+        self.assertGreater(pre, 0.0)
+        # reversal fires the snap; its residual is excluded, so
+        # sigma_r is bit-identical to its pre-event value.
+        e.correct(t_last + 0.5, x_last - 1.5, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 1)
+        self.assertEqual(e.resid_ms, pre)
+        # the object flips BACK at the next read — a follow-on
+        # contradiction graded against the decontaminated band.
+        # In the v1 engine this read graded ~2x and never re-fired.
+        e.correct(t_last + 1.0, x_last, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 2)
+        self.assertEqual(e.resid_ms, pre)
+        self.assertEqual(e.n_decontam_excluded, 2)
+
+    def test_variantA_below_grade_read_still_updates_and_closes(self):
+        e, t_last, x_last = warmed_engine(self.lens, snap_k=3.0,
+                                          decontam="A")
+        pre = e.resid_ms
+        e.correct(t_last + 0.5, x_last - 1.5, 0.0, self.lens)
+        self.assertTrue(e._transient_open)
+        # an ordinary on-trajectory read (residual ~0) is NOT
+        # snap-grade: under exclusion it still enters the EMA
+        # (that is what distinguishes A from the freeze) and it
+        # closes the grade-driven transient.
+        e.correct(t_last + 1.0, x_last - 3.0, 0.0, self.lens)
+        self.assertFalse(e._transient_open)
+        self.assertLess(e.resid_ms, pre)
+        self.assertEqual(e.n_decontam_excluded, 1)
+
+    def test_variantB_freeze_holds_sigma_then_ema_resumes(self):
+        e, t_last, x_last = warmed_engine(self.lens, snap_k=3.0,
+                                          decontam="B")
+        pre = e.resid_ms
+        e.correct(t_last + 0.5, x_last - 1.5, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 1)
+        self.assertEqual(e.resid_ms, pre)
+        # TRANSIENT_READS ordinary reads (residual ~0, which would
+        # drag the EMA down): the freeze holds sigma_r exactly.
+        for i in range(1, EngineObject.TRANSIENT_READS + 1):
+            e.correct(t_last + 0.5 + 0.5 * i,
+                      x_last - 1.5 - 1.5 * i, 0.0, self.lens)
+            self.assertEqual(e.resid_ms, pre,
+                             f"transient read {i} moved sigma_r")
+        self.assertEqual(e.n_decontam_excluded,
+                         1 + EngineObject.TRANSIENT_READS)
+        # the transient is over: the next read's residual enters
+        # the EMA again — it resumes from the frozen value.
+        i = EngineObject.TRANSIENT_READS + 1
+        e.correct(t_last + 0.5 + 0.5 * i,
+                  x_last - 1.5 - 1.5 * i, 0.0, self.lens)
+        self.assertLess(e.resid_ms, pre)
+
+    def test_decontam_inert_without_snap_armed(self):
+        # comparability guard: with snap_k=None no snap can fire,
+        # no transient opens, and the EMA eats even a reversal
+        # residual exactly as the v1 engine does.
+        e, t_last, x_last = warmed_engine(self.lens, snap_k=None,
+                                          decontam="B")
+        pre = e.resid_ms
+        e.correct(t_last + 0.5, x_last - 1.5, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 0)
+        self.assertEqual(e.n_decontam_excluded, 0)
+        self.assertGreater(e.resid_ms, pre)
 
 
 if __name__ == "__main__":

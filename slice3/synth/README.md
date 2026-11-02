@@ -10,7 +10,7 @@ that claim, and prices where it breaks.
 Everything here is synthetic ground truth plus one real-data echo.
 Nothing touched the live soak feed. Code: `engine.py` (world,
 sensor, lens, engine), `run_experiment.py` (the measurement),
-`test_engine.py` (the labelling rules, 10/10 passing), numbers in
+`test_engine.py` (the labelling rules, 17/17 passing), numbers in
 `results.json` (seed 20261101, deterministic).
 
 ## Method
@@ -194,11 +194,20 @@ synthesizer argument to bite; it has to have rhythm.
    defines. **Built and measured in the SNAP section below: the
    rule is right and 3× is the right threshold, but graded
    against the live σ_r it is toothless — the triggering residual
-   inflates the very band the next correction is judged by. The
-   updated rule: a residual that beats the snap threshold is a
-   regime change and must be excluded from the error-model EMA
-   (or σ_r frozen while a snap transient is open), so follow-on
-   contradictions grade against the pre-event band.**
+   inflates the very band the next correction is judged by.
+   Decontaminated in the SNAP2 section below, whose winning form
+   is now the rule: at 3×, a snap-grade residual is a regime
+   change and NEVER enters the error-model EMA — not the firing
+   read, and not any snap-grade read arriving while the snap
+   transient is open (variant A, exclusion; the transient opens
+   on a snap and closes on the first non-snap-grade read).
+   Follow-on contradictions therefore grade against the
+   pre-event band: the second snap fires at 11.9×, recovery
+   collapses to 2 corrections / 2.00 s, and the cost side stays
+   exactly zero. The freeze variant (B) reaches the identical
+   outcome discarding more samples; decontamination at 2×
+   amplifies false snaps instead of curing them — it is not a
+   licence to lower the threshold.**
 5. **Rhythm learning belongs in the lens for every stream class,**
    including discrete ones. The C echo's sampler was wrong 100%
    at odd lags on rhythm alone.
@@ -288,3 +297,105 @@ freezes while a snap transient is open). That decontamination —
 graded by this same recovery metric — is the next experiment.
 Until it lands, the engine ships snap-off, with 3× armed only
 where a false snap is cheaper than a slow recovery.
+
+## SNAP2: the decontaminated band, measured
+
+Design rule 4's second follow-up (`python3 run_experiment.py
+--snap2`, full numbers in `snap2_results.json`). Identical
+streams (seed 20261101); comparability audits first: snap-off
+reproduces every v1 engine mean exactly, and a decontamination
+flag with the snap disarmed is inert (also exact) — the sweep
+compares policies, not streams. 17/17 unit tests (4 new: variant
+A excludes the firing and follow-on residuals; a below-grade
+read still updates under A and closes its transient; variant B's
+freeze holds σ_r bit-exact across the transient and the EMA
+resumes after; the flags are inert without the snap armed).
+
+**Selection rule — committed before the results.** Disqualify
+any variant with >0 false snaps on the controls, or a speeder
+regression: any speeder lag-1 manoeuvre bin worse than snap-off
+by more than max(10% relative, 0.02 absolute). Among survivors,
+the winner is the fastest reverser time-to-baseline; ties break
+on fewer corrections-to-reconverge, then on smaller max
+control-error delta across lags.
+
+**The variants.** Bare snap (v1) at k ∈ {2, 3}, plus two ways to
+stop the firing residual from contaminating the band it was
+judged by:
+
+- **A — exclusion.** A snap-grade residual never enters the
+  resid EMA: not the firing read, and not any snap-grade read
+  (fired or guard-suppressed) arriving while a snap transient
+  is open. The transient is *grade-driven*: it opens on a snap
+  and closes on the first non-snap-grade read, whose residual
+  updates the EMA normally.
+- **B — freeze.** A snap freezes σ_r at its pre-event value for
+  the next **4 corrections** (~2.3 s at the learned 0.563 s
+  period — spanning the measured [0, 2) danger window). No
+  residual at all updates the EMA during the window, a re-fire
+  re-opens the full window, and the EMA resumes from the frozen
+  value afterwards. The transient is *count-driven*.
+
+**Reverser recovery** (baseline median 0.115, every variant):
+
+| variant | [0,1) | [1,2) | [2,4) | [4,8) | time-to-baseline | velocity re-converged | snaps |
+|---|---|---|---|---|---|---|---|
+| snap off | 2.303 | 6.919 | 2.452 | 0.438 | 6.00 s | 8 corrections | — |
+| bare 2× | 2.320 | 5.778 | 0.157 | 0.122 | 2.00 s | 2 corrections | 5 |
+| bare 3× | 2.303 | 5.780 | 1.674 | 0.309 | 6.00 s | 7 corrections | 1 |
+| **3× A** | 2.303 | 5.780 | **0.157** | **0.122** | **2.00 s** | **2 corrections** | **2** |
+| **3× B** | 2.303 | 5.780 | **0.157** | **0.122** | **2.00 s** | **2 corrections** | **2** |
+
+At 3× the decontamination does exactly what it was built to do.
+Bare 3× fired once (t=45.251, ratio 8.97×) and stalled: the
+straddle residual entered the EMA, and the follow-on
+contradiction graded at ~2× against the swollen band. Under
+both A and B the same follow-on read (t=45.846, residual 1.993)
+grades at **11.9×** against the honest pre-event band and fires
+— the second snap bare 2× needed a noise-level threshold to
+reach — and recovery matches bare 2× bin for bin while the cost
+side stays at bare 3×'s zero: no false snaps, speeder bins
+bit-identical to snap-off, control error delta +0.0% at every
+lag. At 2× decontamination *amplifies* the disease instead:
+the narrower honest band produces more 2× crossings (A: 26
+false snaps on controls, B: 33; control error +37.1% / +48.9%),
+so both 2× decontaminated variants are disqualified harder than
+bare 2× (12 false snaps, +22.6%). Decontamination is a property
+of the band, not a licence to lower the threshold.
+
+**The speeder surprise — verified twice, still disqualified.**
+The brief required the snap to stay unproductive on the speeder;
+at 2× B it did not. B fired 38 speeder snaps, 26 of them inside
+the acceleration window (31–62 s), and repeated velocity resets
+to the latest measured delta act as a crude acceleration
+tracker: speeder class means improve at *every* lag (lag 1:
+0.392 → 0.284; lag 10: 9.293 → 8.139) and the late manoeuvre
+bins improve ([4, 8): 0.838 → 0.508). Verified against both the
+snap event record (times cluster in the window) and the class
+lag table. But the same cascade fires twice just *before* onset
+(t=29.379, 29.839 — present in every 2× variant) and worsens
+the onset bin [0, 1) 0.139 → 0.291, an excess of +0.155 over
+the selection tolerance, and its control cost is the worst
+measured. The honest version of this discovery is a regime
+detector (rule 3's acceleration signal), not a hair-trigger
+snap: recorded here as an observation, not adopted.
+
+**Calibration re-grade.** At 3× A/B, serve exceedance per regime
+is v1's for the controls and the speeder (bit-identical paths);
+the reverser's rises slightly at short lags (0.09 → 0.15 at lag
+0) — the price of a narrower post-event band — and its
+correction exceedance moves 0.25 → 0.36, onto the 0.368 design
+point. At 2× B the false-snap cascade taxes calibration
+broadly (control exceedance 0.00 → 0.07–0.09 at long lags).
+
+**Verdict.** A and B tie on all three committed criteria
+(2.00 s, 2 corrections, +0.0%). The seat goes to **variant A,
+exclusion, at k = 3**, on a principle recorded here rather than
+hidden in the tie: it discards strictly less — exactly the 2
+snap-grade residuals, against B's 6 excluded (the two fires
+plus 4 frozen ordinary reads) for the identical outcome — and
+its transient ends itself on evidence instead of on a count.
+B stands as the co-equal fallback for a stream whose grade
+signal is too noisy to close a transient. The engine's shipping
+configuration changes accordingly: snap on at 3× with exclusion
+decontamination, where the SNAP verdict had left it off.

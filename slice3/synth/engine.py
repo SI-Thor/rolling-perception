@@ -123,6 +123,32 @@ class EngineObject:
     n_snap_suppressed: int = 0   # residual beat k x band but age-gated
     snap_events: list[tuple[float, float, float, float]] = field(
         default_factory=list)    # (t, age, residual, residual / band)
+    # decontamination (Slice 3 SNAP2): the snap experiment found the
+    # firing residual inflates sigma_r ~5x through the resid EMA, so
+    # the follow-on contradiction grades against a contaminated band
+    # and never re-fires. A snap-grade residual is a regime change,
+    # not a sample of the error distribution. Two fixes, as flags:
+    #   "A" exclusion — a snap-grade residual never enters the EMA:
+    #       not the firing read, and not any snap-grade read (fired
+    #       or guard-suppressed) arriving while a snap transient is
+    #       open. The transient is GRADE-DRIVEN: it opens on a snap
+    #       and closes on the first non-snap-grade read, whose
+    #       residual updates the EMA normally.
+    #   "B" freeze — a snap freezes sigma_r at its pre-event value
+    #       for TRANSIENT_READS further corrections: NO residual
+    #       updates the EMA during the window (the firing read's
+    #       included), a re-fire re-opens the full window, and the
+    #       EMA resumes from the frozen value afterwards. The
+    #       transient is COUNT-DRIVEN.
+    # Both are inert when snap_k is None (no snap can fire, no
+    # transient can open), preserving the v1 engine exactly.
+    decontam: str | None = None  # None = v1 | "A" | "B"
+    n_decontam_excluded: int = 0
+    _transient_open: bool = False   # variant A state
+    _transient_left: int = 0        # variant B: frozen reads remaining
+    TRANSIENT_READS = 4             # ~2.3 s at this stream's learned
+    #                                 period (0.563 s): spans the
+    #                                 measured [0, 2) danger window
 
     # Stated-band model: band(a) = sigma_r * max(1, a / period).
     # sigma_r is the RMS radial residual of one-period extrapolation.
@@ -156,22 +182,45 @@ class EngineObject:
             stated = self.band(age, lens.est_period)
             if stated > 0.0:
                 self.exceed_hist.append(1 if r > stated else 0)
-            # error-model update (first residual seeds the EMA)
-            if self.n_resid == 0:
-                self.resid_ms = r * r
-            else:
-                self.resid_ms += self.alpha_r * (r * r - self.resid_ms)
-            self.n_resid += 1
             # snap decision, graded against the same pre-stated band
             # as the exceedance bit — the engine may not use the
             # read's own news to widen the band it is judged by.
+            candidate = (self.snap_k is not None and stated > 0.0
+                         and r > self.snap_k * stated)
             snap = False
-            if (self.snap_k is not None and stated > 0.0
-                    and r > self.snap_k * stated):
+            if candidate:
                 if age <= lens.stale_threshold:
                     snap = True
                 else:
                     self.n_snap_suppressed += 1
+            # decontamination: decide whether this residual may
+            # enter the error-model EMA at all (see the decontam
+            # field note). Grading above already used the pre-read
+            # band either way; exclusion only stops the event from
+            # widening the band its successors are judged by.
+            excluded = False
+            if self.decontam == "A":
+                excluded = snap or (candidate and self._transient_open)
+                if snap:
+                    self._transient_open = True
+                elif not candidate:
+                    self._transient_open = False
+            elif self.decontam == "B":
+                if snap:
+                    excluded = True
+                    self._transient_left = self.TRANSIENT_READS
+                elif self._transient_left > 0:
+                    excluded = True
+                    self._transient_left -= 1
+            # error-model update (first residual seeds the EMA)
+            if excluded:
+                self.n_decontam_excluded += 1
+            else:
+                if self.n_resid == 0:
+                    self.resid_ms = r * r
+                else:
+                    self.resid_ms += self.alpha_r * (r * r - self.resid_ms)
+                self.n_resid += 1
             # velocity update from raw read deltas
             dt = t - self._prev_t
             if dt > 0:

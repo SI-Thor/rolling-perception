@@ -43,14 +43,17 @@ def mean(xs):
 
 # ---------------------------------------------------------------- replay
 
-def replay(world, reads, snap_k=None):
+def replay(world, reads, snap_k=None, decontam=None):
     """Feed arrivals (non-dropped reads) to lens+engines; snapshot
     the full state after every arrival. snap_k=None is the v1
-    engine; a float arms the snap rule at that band multiple."""
+    engine; a float arms the snap rule at that band multiple.
+    decontam ("A"/"B") arms a SNAP2 band-decontamination variant;
+    it is inert when snap_k is None."""
     lens = Lens(nominal_period=0.5)
     engines = {n: EngineObject(n) for n in world.NAMES}
     for e in engines.values():
         e.snap_k = snap_k
+        e.decontam = decontam
     snaps = []  # (t_arrival, lens_tuple, {name: engine snapshot}, {name: raw z})
     for rd in reads:
         if rd.dropped:
@@ -582,9 +585,182 @@ def print_snap_tables(r, v1):
             m["correction_exceedance_trailing100"].items()))
 
 
+# ---------------------------------------------------------------- snap2 sweep
+
+SNAP2_VARIANTS = [("off", None, None),
+                  ("k2", 2.0, None), ("k3", 3.0, None),
+                  ("k2A", 2.0, "A"), ("k2B", 2.0, "B"),
+                  ("k3A", 3.0, "A"), ("k3B", 3.0, "B")]
+# Selection rule — committed in the README before the results:
+# disqualify any variant with a false snap on the controls, or a
+# speeder regression (any lag-1 manoeuvre bin worse than snap-off
+# by more than max(10% relative, 0.02 absolute)). Among survivors,
+# fastest reverser time-to-baseline wins; ties break on fewer
+# corrections-to-reconverge, then smaller max control-error delta.
+SPEEDER_TOL_REL, SPEEDER_TOL_ABS = 0.10, 0.02
+
+
+def apply_selection(variants):
+    off = variants["off"]
+    off_bins = [r["engine_lag1_mean"]
+                for r in off["manoeuvre"]["speeder"]["rows"]]
+    off_ctrl = {row["lag_s"]: row["controls"]["engine_mean"]
+                for row in off["lag_table"]}
+    scored = {}
+    for name, m in variants.items():
+        false_snaps = sum(m["snap_stats"][n]["n_snaps"]
+                          for n in World.CONTROLS)
+        bins = [r["engine_lag1_mean"]
+                for r in m["manoeuvre"]["speeder"]["rows"]]
+        worst_excess = max(
+            (b - o) - max(SPEEDER_TOL_REL * o, SPEEDER_TOL_ABS)
+            for b, o in zip(bins, off_bins))
+        ctrl_delta = max(
+            row["controls"]["engine_mean"] / off_ctrl[row["lag_s"]] - 1.0
+            for row in m["lag_table"])
+        vc = m["reverser_velocity_reconverged"]
+        scored[name] = {
+            "false_snaps_controls": false_snaps,
+            "speeder_worst_bin_excess": worst_excess,
+            "speeder_regression": worst_excess > 0.0,
+            "max_control_error_delta": ctrl_delta,
+            "time_to_baseline_s": m["time_to_baseline_s"],
+            "corrections_to_reconverge":
+                vc["corrections_after_event"] if vc else None,
+            "disqualified": false_snaps > 0 or worst_excess > 0.0,
+        }
+    survivors = {n: s for n, s in scored.items() if not s["disqualified"]}
+    winner = None
+    if survivors:
+        winner = min(survivors, key=lambda n: (
+            survivors[n]["time_to_baseline_s"]
+            if survivors[n]["time_to_baseline_s"] is not None
+            else float("inf"),
+            survivors[n]["corrections_to_reconverge"] or 10 ** 9,
+            survivors[n]["max_control_error_delta"]))
+    return scored, winner
+
+
+def run_snap2():
+    """SNAP2: bare snap vs the two decontamination variants, at
+    k in {2, 3}. Identical streams to run()/run_snap(); snap-off
+    (with and without a decontam flag) must reproduce v1 exactly."""
+    rng = random.Random(SEED)
+    world = World()
+    sensor = Sensor(rng)
+    reads = sensor.stream(world, World.T_END)
+    with open(os.path.join(HERE, "results.json")) as f:
+        v1 = json.load(f)
+
+    variants = {}
+    for name, k, dc in SNAP2_VARIANTS:
+        snaps, engines_final, _lens = replay(world, reads,
+                                             snap_k=k, decontam=dc)
+        m = measure_variant(world, snaps)
+        m["correction_exceedance_trailing100"] = {
+            n: engines_final[n].exceedance_rate(100) for n in world.NAMES}
+        m["snap_stats"] = {}
+        for n in world.NAMES:
+            ev = engines_final[n].snap_events
+            m["snap_stats"][n] = {
+                "n_snaps": engines_final[n].n_snaps,
+                "n_suppressed": engines_final[n].n_snap_suppressed,
+                "n_decontam_excluded":
+                    engines_final[n].n_decontam_excluded,
+                "sigma_r_final": engines_final[n].sigma_r(),
+                "snaps_on_rhythm":
+                    sum(1 for e in ev if e[1] <= GAP_AGE_SPLIT),
+                "snaps_post_gap_age":
+                    sum(1 for e in ev if e[1] > GAP_AGE_SPLIT),
+                "events": [[round(x, 3) for x in e] for e in ev]}
+        variants[name] = m
+
+    scored, winner = apply_selection(variants)
+
+    # comparability audits: snap-off reproduces v1; a decontam flag
+    # with snap disarmed is inert and also reproduces v1.
+    def matches_v1(snaps_list):
+        mm = measure_variant(world, snaps_list)
+        return all(
+            abs(row_v[c]["engine_mean"] - row_1[c]["engine_mean"]) < 1e-9
+            for row_v, row_1 in zip(mm["lag_table"], v1["lag_table"])
+            for c in ("all", "controls", "speeder", "reverser"))
+
+    snaps_off, _e, _l = replay(world, reads)
+    audit_off = matches_v1(snaps_off)
+    snaps_off_dc, _e2, _l2 = replay(world, reads, snap_k=None,
+                                    decontam="B")
+    audit_off_dc = matches_v1(snaps_off_dc)
+
+    result = {"seed": SEED,
+              "variants_spec": {n: {"snap_k": k, "decontam": dc}
+                                for n, k, dc in SNAP2_VARIANTS},
+              "comparability_audit_passed": audit_off,
+              "decontam_inert_audit_passed": audit_off_dc,
+              "selection": scored, "winner": winner,
+              "variants": variants}
+    with open(os.path.join(HERE, "snap2_results.json"), "w") as f:
+        json.dump(result, f, indent=1)
+    print_snap2_tables(result)
+    return result
+
+
+def print_snap2_tables(r):
+    vs = r["variants"]
+    print(f"comparability audit (snap-off == v1): "
+          f"{r['comparability_audit_passed']}; decontam-flag-inert "
+          f"audit: {r['decontam_inert_audit_passed']}")
+    print("\nREVERSER RECOVERY")
+    print(f"{'variant':>8} {'base':>6} {'[0,1)':>7} {'[1,2)':>7} "
+          f"{'[2,4)':>7} {'[4,8)':>7} {'rec win':>9} {'t->base':>8} "
+          f"{'vel conv':>9}")
+    for name, m in vs.items():
+        mt = m["manoeuvre"]["reverser"]
+        rows = mt["rows"]
+        vc = m["reverser_velocity_reconverged"]
+        print(f"{name:>8} {mt['baseline_lag1_median']:>6.3f} "
+              + " ".join(f"{row['engine_lag1_mean']:>7.3f}"
+                         for row in rows[1:5])
+              + f" {str(mt['recovery_window']):>9} "
+              + (f"{m['time_to_baseline_s']:>8.2f}"
+                 if m["time_to_baseline_s"] is not None
+                 else f"{'never':>8}")
+              + (f"{vc['corrections_after_event']:>7}c" if vc
+                 else f"{'--':>9}"))
+    print("\nSNAP ACCOUNTING (fired per object; excluded residuals; "
+          "final sigma_r)")
+    for name, m in vs.items():
+        if name == "off":
+            continue
+        parts = []
+        for n in World.NAMES:
+            s = m["snap_stats"][n]
+            parts.append(f"{n}: {s['n_snaps']}f/"
+                         f"{s['n_decontam_excluded']}x "
+                         f"sr={s['sigma_r_final']:.3f}")
+        print(f" {name}: " + "; ".join(parts))
+    print("\nSPEEDER BINS (lag-1 engine mean; snap must not help "
+          "or hurt)")
+    for name, m in vs.items():
+        mt = m["manoeuvre"]["speeder"]
+        print(f" {name:>4}: " + " ".join(
+            f"{row['engine_lag1_mean']:.3f}" for row in mt["rows"])
+            + f" | snaps: {m['snap_stats']['speeder']['n_snaps']}")
+    print("\nSELECTION (rule committed before the run)")
+    for name, s in r["selection"].items():
+        print(f" {name:>4}: false={s['false_snaps_controls']} "
+              f"speeder_excess={s['speeder_worst_bin_excess']:+.3f} "
+              f"ctrl_delta={s['max_control_error_delta']:+.1%} "
+              f"ttb={s['time_to_baseline_s']} "
+              f"disq={s['disqualified']}")
+    print(f" WINNER: {r['winner']}")
+
+
 if __name__ == "__main__":
     import sys
-    if "--snap" in sys.argv:
+    if "--snap2" in sys.argv:
+        run_snap2()
+    elif "--snap" in sys.argv:
         run_snap()
     else:
         run()
