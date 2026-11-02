@@ -6,4 +6,5 @@ members = [
     "crates/rolling-pipeline",
     "crates/rolling-adaptive",
     "crates/cuda-thor",
+    "crates/harbor-watch",
 ]

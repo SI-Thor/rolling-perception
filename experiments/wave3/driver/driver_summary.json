@@ -1,0 +1,26 @@
+{
+  "threshold_rule": "pooled median of all tile diffs",
+  "threshold": 50.059274673461914,
+  "rack_embed_latency_s_excl_first_load": {
+    "n": 887,
+    "p50": 0.1727923339985864,
+    "p95": 0.2004633056003513,
+    "mean": 0.18246434594361247
+  },
+  "strategy_ALL": {
+    "embeds": 576,
+    "wall_s": 119.60674811100034
+  },
+  "strategy_CHANGED": {
+    "embeds": 312,
+    "wall_s": 55.04402247500002
+  },
+  "audit": {
+    "n": 60,
+    "drift_mean": 0.20191356790403173,
+    "drift_p50": 0.1452779709414665,
+    "drift_p95": 0.5348350986642505,
+    "drift_max": 0.6259897372406864
+  },
+  "skipped_total": 264
+}

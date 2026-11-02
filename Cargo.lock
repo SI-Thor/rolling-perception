@@ -7,6 +7,13 @@ name = "cuda-thor"
 version = "0.2.0-spike"
 
 [[package]]
+name = "harbor-watch"
+version = "0.1.0"
+dependencies = [
+ "rolling-substrate-core",
+]
+
+[[package]]
 name = "rolling-adaptive"
 version = "0.1.0"
 

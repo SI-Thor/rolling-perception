@@ -33,9 +33,10 @@ From the **repository root**:
 
 ```sh
 cargo test --release
-# expect: 44 passed total — 6 (rolling-perception) + 23 (rolling-substrate-core)
+# expect: 52 passed total — 6 (rolling-perception) + 23 (rolling-substrate-core)
 #         + 6 (rolling-pipeline: 3 unit + 3 integration) + 6 (rolling-adaptive)
 #         + 3 (cuda-thor CPU reference; its GPU tests need the Thor, see crates/cuda-thor)
+#         + 8 (harbor-watch, the wave-3 real-workload crate)
 
 cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
 # expect two lines (batched, rolling) ending with:
@@ -45,7 +46,7 @@ cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
 ```
 
 Scope, because the same words do different things in different folders:
-`cargo test` at the root tests **both** crates (29 tests); inside
+`cargo test` at the root tests **all** crates (52 tests); inside
 `crates/rolling-perception/` it tests 6; inside
 `crates/rolling-substrate-core/` it tests 23. `cargo run` needs
 `-p rolling-perception` at the root (or run it from that crate's folder).
@@ -84,6 +85,7 @@ What each experiment means, and the numbers to expect, are in
 | Persistent soak, 10 min (Spike 2) | `experiments/thor-cuda/spike2/` | 600.1 s, 5,981 requests, buffer exact, clean flag stop, process verified gone. GPU 39→46 °C peak, ~8–9 W. Ack p50 5.4 µs at a realistic 100 ms cadence, p95 1.83 ms — the tail is reported, and a foreign all-core CPU burn mid-soak is attributed, not hidden. |
 | Integrated cascade end-to-end | `crates/rolling-pipeline` | perceive→decide→direct→refine→publish through real rings: published lineage = all 5 stages exactly once; gating saved **71.9%** of perceive ops (counted); sheaf energy 132.75→95.97; file-replay reproduces the synthetic run exactly. |
 | Lens-calibrated adaptive stagger | `crates/rolling-adaptive` | Per-lane LensFile (period/jitter/phase self-model as text). On jitter+drift traces: prediction p95 **1,669 µs vs 854,285 µs** fixed (fixed stagger's error compounds under drift); jitter-only: 11.4× and freshness 32%→57%. On zero-jitter traces: **exact tie** — stated, not spun. |
+| **Real workload: harbor-watch (wave 3)** | `crates/harbor-watch`, `docs/WAVE3.md`, `experiments/wave3/` | Real frames perceived by the Thor's own I-JEPA (p50 173 ms/embed): diff-gating spent **312 embeds vs 576** (−54% rack time) and follows ground truth per sequence (gradual turntable: 23/192 kept). Through the Rust cascade: **every scene cut flagged 16/16 tiles the frame it landed**; gradual rotation near-silent (2/192); frame verdicts agree between strategies 1.0000 on the cuts sequence. The gate is a ranker, not a separator (audit: skipped drift 0.20 vs embedded 0.48) — stated in `docs/WAVE3.md`, with the reflective Jev layer honestly unmeasured (credential). |
 
 ## Layout
 
@@ -103,6 +105,12 @@ What each experiment means, and the numbers to expect, are in
   fixed stagger on identical jittered/drifting traces.
 - `crates/cuda-thor` — v0.2 GPU executor (feature-gated, Thor-only):
   NVRTC-from-Rust, launch-boundary module swap with epoch retirement.
+- `crates/harbor-watch` — wave 3: the first real workload. Rolling
+  change detection over real I-JEPA tile embeddings at full 1280-dim
+  on the substrate rings; see `docs/WAVE3.md`.
+- `experiments/wave3/` — the wave-3 driver (Thor, JEV rack), the
+  reflective-judge lane (TypeSafe Jev — runner ready, unmeasured),
+  and the HTML report tool that renders verdicts for a human.
 - `experiments/thor-cuda` — the Thor play session, sources + `PLAYLOG.md`
   (including the bench bug that lied, and how it was caught), plus the
   Spike 2 sources and soak logs.

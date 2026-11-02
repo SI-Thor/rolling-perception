@@ -47,6 +47,9 @@ written (do not duplicate them):
 | `thor/2026-11-01-feasibility.md` | `docs/FEASIBILITY.md` |
 | `thor/2026-11-01-thor-cuda-play.md` | `experiments/thor-cuda/PLAYLOG.md` |
 | `thor/2026-11-01-workspace-verification.md` | `docs/THOR-VERIFICATION.md` |
+| Wave 3: harbor-watch real workload | `docs/WAVE3.md` (+ data in `experiments/wave3/`) |
 
 From the next run onward, write the result file here first and make
 the prose a pointer to it.
+
+| `thor/2026-11-01-wave3-harbor-watch.md` | `docs/WAVE3.md` (+ data in `experiments/wave3/`) |

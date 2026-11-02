@@ -1,0 +1,17 @@
+[package]
+name = "harbor-watch"
+version = "0.1.0"
+edition = "2021"
+description = "Rolling visual change detection over real I-JEPA tile embeddings: perceive -> decide -> direct -> refine (one Laplacian step over the 4x4 tile grid) -> publish, carried on rolling-substrate-core rings at full 1280-dim. Wave 3 of SI-Thor/rolling-perception."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Wave-3 workdir layout: this crate sits in rolling-perception-work/wave3/,
+# the substrate in rolling-perception-work/repo-staging/crates/.
+# In the final repo both are crates/ siblings and this path becomes
+# "../rolling-substrate-core".
+rolling-substrate-core = { path = "../rolling-substrate-core" }
+
+[[bin]]
+name = "harbor-watch"
+path = "src/main.rs"

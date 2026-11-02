@@ -6,7 +6,32 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
-## [Unreleased] — wave 2 (v0.2 spikes + integration), 2026-11-01
+## [Unreleased] — wave 3 (first real workload: harbor-watch), 2026-11-01
+
+### Added
+- `crates/harbor-watch` — rolling visual change detection over real
+  I-JEPA tile embeddings, full 1280-dim on the substrate rings
+  (perceive → decide → direct → refine → publish), 8 tests including
+  the refine ablation (fixture precision 0.60 → 1.00, recall 1.00)
+  and the stale-score publish rule a failing test forced.
+- **The wave-3 run** (`docs/WAVE3.md`, data in `experiments/wave3/`):
+  real frames on the Thor through its own JEV rack. Diff-gating spent
+  312 embeds vs ALL's 576 (−54% rack time; gradual turntable kept
+  23/192). Cuts sequence: every cut flagged 16/16 tiles on the frame
+  it landed; frame verdicts agree 1.0000 between strategies. Audit
+  keeps the gate honest: it is a ranker (skipped drift 0.20 vs
+  embedded 0.48), not a separator.
+- HTML report tool (`experiments/wave3/report/`) — verdicts a human
+  can open: frames with changed tiles overlaid, scoreboard vs truth.
+- The reflective Jev lane (`experiments/wave3/jev/`) is **built but
+  unmeasured**: both routes (pi agent, direct connector) reach a
+  credential wall (pi has none configured; the stored key 401s).
+  Runner executes when the credential is reconnected. No Jev numbers
+  are claimed anywhere in this wave.
+- Footprint note: the JEV rack was started for the run and stopped
+  after — verified inactive. Nothing in wave 3 is resident.
+
+## [0.2.0] — wave 2 (v0.2 spikes + integration), 2026-11-01
 
 ### Added
 - Tested quickstart (literal follow-through on the Thor: 9 doc failures
