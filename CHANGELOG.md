@@ -6,6 +6,45 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — low-level round: connect + harden + the engine book, 2026-11-01 (night)
+
+### Connected
+- **Adaptive → pipeline**: `run_rolling_adaptive` drives the cascade's
+  release timing from the lens (rolling-adaptive needed zero changes —
+  its surface was already right). On the drift stream (period 400→675 µs)
+  outputs are identical to the fixed-stagger baseline while lens release
+  p95 is **60.5 µs vs the fixed control's 7,425.0 µs**.
+- **Executor seam** (`crates/rolling-pipeline/src/executor.rs`): the
+  contract a GPU two-stream-shadow backend must satisfy, a compiling
+  `gpu-shadow` stub behind an off-by-default feature, and
+  `src/bin/endtoend.rs` — one asserted end-to-end run of the whole engine.
+- Workspace tests **55 → 75** (pipeline 6→12, substrate-core 23→32,
+  cuda-thor 3→8).
+
+### Fixed (hardening pass — `crates/*/HARDENING.md` has the full audit)
+- **Release-mode out-of-bounds host read** in cuda-thor `DevBuf::upload`:
+  its length check was `debug_assert_eq!`-only; a short host slice would
+  have made `cuMemcpyHtoD` read past the allocation. Now a hard `Err`;
+  `Module::launch` also validates extents at runtime.
+- `Lease::finalize` counter divergence at the 2⁶⁴ boundary (debug panic /
+  release wrap) → `wrapping_add`, wrap behaviour test-pinned.
+- `Gpu::new` context-retain leak on a failure path; `Viewport::area`
+  underflow on inverted viewports; `gated_apply` mis-gating above
+  u32::MAX grid width; 4× `CString::new().unwrap()` on FFI paths.
+- `Event::record` / `Module::launch` are now `unsafe fn` with # Safety
+  contracts (they dereference caller stream handles); ~30 unsafe blocks
+  carry SAFETY comments; both crates are clippy `-D warnings` clean and
+  `#![warn(missing_docs)]`-clean (52 doc warnings cleared).
+
+### Documented
+- **`docs/ARCHITECTURE.md`** — the engine book: real `cargo tree` map,
+  claim→proof tracing of 34 load-bearing claims (**10 proven, 13 partial,
+  10 unproven, 1 refuted**), per-crate invariants ledger. Headline
+  divergence, now on the record: DESIGN §3.2's SPSC acquire/release ring
+  was never built — the shipped ring is a multi-producer Disruptor
+  claim/finalize design; and the "allocation-free" sheaf step allocates
+  a Vec per call (`laplacian_apply`).
+
 ## [Unreleased] — Confluence slices 1–3, 2026-11-01 (evening)
 
 ### Added

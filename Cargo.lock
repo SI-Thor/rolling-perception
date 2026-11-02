@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "confluence-watch"
+version = "0.1.0"
+dependencies = [
+ "harbor-watch",
+ "rolling-substrate-core",
+]
+
+[[package]]
 name = "cuda-thor"
 version = "0.2.0-spike"
 
@@ -25,6 +33,7 @@ version = "0.1.0"
 name = "rolling-pipeline"
 version = "0.1.0"
 dependencies = [
+ "rolling-adaptive",
  "rolling-perception",
  "rolling-substrate-core",
 ]

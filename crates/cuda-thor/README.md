@@ -34,17 +34,21 @@ re-JIT on every swap and swamp the measurement. Each epoch: load module →
 against the CPU reference for that variant. A retired module is unloaded
 **only after** its epoch event has synchronised; the data structure makes
 the reverse order unrepresentable. `cuMemGetInfo` is sampled before and
-after (all modules unloaded): the test asserts free-memory delta stays
-above −16 MiB.
+after (all modules unloaded): the structural gate is loads == unloads
+== 1000; the test additionally asserts the free-memory delta stays
+above −384 MiB — a wide backstop, because cuMemGetInfo pool noise on
+the shared Thor swings ~±150 MB (see the comment in
+`tests/spikes.rs`).
 
 ## Run it (on the Thor)
 
 ```sh
 export PATH=$HOME/.cargo/bin:/usr/local/cuda/bin:$PATH
-cargo test  # CPU parts, anywhere
+cargo test  # CPU parts, anywhere: 8 tests (3 unit + 5 randomised
+            # property tests in tests/properties.rs); see HARDENING.md
 cargo test --release --features cuda-thor -- --ignored --nocapture  # GPU spikes
 cargo run  --release --features cuda-thor --bin spikes              # same, as a report
 ```
 
-Measured results: see `results-spike1-3.txt` in this folder (captured on
-the Thor, 2026-11-01).
+Measured results: see `results/thor/2026-11-01-spike1-3.txt` at the
+repository root (captured on the Thor, 2026-11-01).

@@ -1,5 +1,13 @@
 # Thor verification — 2026-11-01
 
+> **Update note (2026-11-01, doc sweep):** this is the dated record of
+> the wave-1 verification run, when the workspace had two crates and
+> 29 tests. The workspace has since grown to seven members and
+> **55 tests** (verified by a fresh `cargo test --workspace` run the
+> same day; the Thor-native rerun of the full suite is owed — see
+> `docs/ARCHITECTURE.md`). The numbers below are the run's own record
+> and are left as measured.
+
 The full Rust workspace was copied to the AGX Thor
 (`~/rolling-perception-play/rust/`, a play directory, nothing installed or
 left running) and tested natively on the box:

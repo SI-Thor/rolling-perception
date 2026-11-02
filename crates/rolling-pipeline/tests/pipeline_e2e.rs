@@ -10,7 +10,10 @@ fn hotspot_cycles(cycles: usize, per_cycle: usize, stagger_us: u64) -> Vec<Cycle
             let t0 = chunk[0].arrival;
             chunk
                 .iter()
-                .map(|e| TraceEntry { arrival: e.arrival - t0, data: e.data.clone() })
+                .map(|e| TraceEntry {
+                    arrival: e.arrival - t0,
+                    data: e.data.clone(),
+                })
                 .collect()
         })
         .collect()
@@ -27,13 +30,12 @@ fn end_to_end_lineage_energy_and_gating() {
     let pubd = last.unwrap();
 
     // Lineage of a published payload: all five stages, exactly once.
-    for stage in 0..5 {
-        assert!(pubd.lineage.visited(stage), "{} missing from lineage", STAGE_NAMES[stage]);
+    for (stage, name) in STAGE_NAMES.iter().enumerate() {
+        assert!(pubd.lineage.visited(stage), "{name} missing from lineage");
         assert_eq!(
             pubd.lineage.count(stage),
             1,
-            "{} must appear exactly once",
-            STAGE_NAMES[stage]
+            "{name} must appear exactly once"
         );
     }
     assert_eq!(pubd.lineage.mask, 0b11111);
@@ -68,9 +70,17 @@ fn gate_feedback_lands_on_next_pass() {
     let mut pipe = Pipeline::new();
     let jobs = hotspot_cycles(1, 3, 0);
     let p0 = pipe.run_tick(&jobs[0][0].data);
-    assert_eq!(p0.gate_used, rolling_substrate_core::gating::Viewport::full(8, 8), "tick 0 is full-frame");
+    assert_eq!(
+        p0.gate_used,
+        rolling_substrate_core::gating::Viewport::full(8, 8),
+        "tick 0 is full-frame"
+    );
     let p1 = pipe.run_tick(&jobs[0][1].data);
-    assert_eq!(p1.gate_used.area(), 16, "tick 1 uses the director's 4x4 gate");
+    assert_eq!(
+        p1.gate_used.area(),
+        16,
+        "tick 1 uses the director's 4x4 gate"
+    );
 }
 
 #[test]
@@ -90,7 +100,10 @@ fn schedulers_same_work_rolling_emits_more_and_first() {
         b.checksum,
         r.checksum
     );
-    assert_eq!(b.ops, r.ops, "counted ops must be identical under both schedulers");
+    assert_eq!(
+        b.ops, r.ops,
+        "counted ops must be identical under both schedulers"
+    );
     assert!(
         r.time_to_first_output < b.time_to_first_output,
         "rolling TTFO {:?} < batched {:?}",

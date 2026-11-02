@@ -78,7 +78,7 @@ On the Thor over SSH, first:
 
 ```sh
 cargo test                                              # 6 tests, this crate only
-                                                        # (from the repo root, cargo test runs all 29)
+                                                        # (from the repo root, cargo test runs all 75)
 cargo run --release                                     # 120 cycles, 400 µs stagger
 cargo run --release -- --cycles 50 --stagger-us 0       # no sensor stagger
 cargo run --release -- --cycles 50 --stagger-us 2000    # sensor-dominated regime

@@ -16,4 +16,6 @@ fn main() {
     }
 }
 #[cfg(not(feature = "cuda-thor"))]
-fn main() { println!("feature off"); }
+fn main() {
+    println!("feature off");
+}

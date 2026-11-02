@@ -30,6 +30,7 @@
 //! * The only `sleep` models **sensor arrivals** (labelled MODELLED
 //!   SENSOR PERIOD at the call site), exactly as in the sibling crate.
 
+use rolling_adaptive::LensFile;
 use rolling_substrate_core::gating::{gated_apply, Viewport};
 use rolling_substrate_core::lineage::COUNTED_NODES;
 use rolling_substrate_core::sheaf::SheafGraph;
@@ -37,6 +38,8 @@ use rolling_substrate_core::substrate::{FluidSubstrateBuffer, Lease};
 use std::hint::black_box;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+
+pub mod executor;
 
 // ------------------------------------------------------------------ stages
 
@@ -104,7 +107,10 @@ impl LineageSnapshot {
         for (i, c) in counts.iter_mut().enumerate() {
             *c = h.count(i).unwrap_or(0);
         }
-        Self { mask: h.visited_mask(), counts }
+        Self {
+            mask: h.visited_mask(),
+            counts,
+        }
     }
 
     /// Replay this snapshot into a freshly leased slot's header, so
@@ -221,14 +227,24 @@ pub struct Published {
     pub data: Vec<f32>,
 }
 
+/// One tick's output plus its per-stage wall durations, in cascade
+/// order ([`STAGE_NAMES`]). The durations are reported, never used as
+/// proof — savings in this crate are counted (see [`Ops`]); the trace
+/// exists so a reader can see where a tick's time went.
+#[derive(Debug, Clone)]
+pub struct TickTrace {
+    pub stage_durations: [Duration; 5],
+    pub published: Published,
+}
+
 /// The cascade. Owns one ring per stage edge plus the director.
 pub struct Pipeline {
-    ring_in: FluidSubstrateBuffer,       // producer  -> perceive
+    ring_in: FluidSubstrateBuffer,        // producer  -> perceive
     ring_perceived: FluidSubstrateBuffer, // perceive  -> decide
-    ring_decided: FluidSubstrateBuffer,  // decide    -> direct
-    ring_directed: FluidSubstrateBuffer, // direct    -> refine
-    ring_refined: FluidSubstrateBuffer,  // refine    -> publish
-    ring_out: FluidSubstrateBuffer,      // publish   -> world
+    ring_decided: FluidSubstrateBuffer,   // decide    -> direct
+    ring_directed: FluidSubstrateBuffer,  // direct    -> refine
+    ring_refined: FluidSubstrateBuffer,   // refine    -> publish
+    ring_out: FluidSubstrateBuffer,       // publish   -> world
     graph: SheafGraph,
     pub director: Director,
     gate: Viewport,
@@ -264,9 +280,21 @@ impl Pipeline {
     /// Run one payload through all five stages. The payload enters via
     /// the producer ring and leaves via the publish ring.
     pub fn run_tick(&mut self, input: &[f32]) -> Published {
-        assert_eq!(input.len(), DIM, "payload must be one {WIDTH}x{HEIGHT} grid");
+        self.run_tick_traced(input).published
+    }
+
+    /// [`Pipeline::run_tick`], additionally recording each stage's wall
+    /// duration into a [`TickTrace`]. Identical work, identical output;
+    /// the trace is observation only.
+    pub fn run_tick_traced(&mut self, input: &[f32]) -> TickTrace {
+        assert_eq!(
+            input.len(),
+            DIM,
+            "payload must be one {WIDTH}x{HEIGHT} grid"
+        );
         let tick = self.tick;
         let mut meta = TickMeta::default();
+        let mut stage_durations = [Duration::ZERO; 5];
 
         // producer: write the payload into the input ring.
         {
@@ -279,6 +307,7 @@ impl Pipeline {
         // perceive: gated kernel through the ring. Consumes the gate
         // set by `direct` on the PREVIOUS tick (full frame on tick 0).
         let gate_used = self.gate;
+        let t = Instant::now();
         stage_perceive(
             &self.ring_in,
             &self.ring_perceived,
@@ -287,12 +316,22 @@ impl Pipeline {
             &mut meta,
             &mut self.ops,
         );
+        stage_durations[STAGE_PERCEIVE] = t.elapsed();
 
         // decide: signal summary + a counted scaling pass.
-        stage_decide(&self.ring_perceived, &self.ring_decided, tick, &mut meta, &mut self.ops);
+        let t = Instant::now();
+        stage_decide(
+            &self.ring_perceived,
+            &self.ring_decided,
+            tick,
+            &mut meta,
+            &mut self.ops,
+        );
+        stage_durations[STAGE_DECIDE] = t.elapsed();
 
         // direct: policy step. The gate it returns is stored and used
         // by perceive on the NEXT tick — the feedback loop.
+        let t = Instant::now();
         let new_gate = stage_direct(
             &self.ring_decided,
             &self.ring_directed,
@@ -301,9 +340,11 @@ impl Pipeline {
             &mut self.director,
             &mut self.ops,
         );
+        stage_durations[STAGE_DIRECT] = t.elapsed();
 
         // refine: one sheaf smoothing step, energy asserted
         // non-increasing per payload inside the stage.
+        let t = Instant::now();
         let (e_before, e_after) = stage_refine(
             &self.ring_directed,
             &self.ring_refined,
@@ -312,22 +353,30 @@ impl Pipeline {
             &mut meta,
             &mut self.ops,
         );
+        stage_durations[STAGE_REFINE] = t.elapsed();
 
         // publish: checksum + final lineage snapshot, out the last ring.
+        let t = Instant::now();
         let published = stage_publish(
             &self.ring_refined,
             &self.ring_out,
             tick,
-            gate_used,
-            e_before,
-            e_after,
+            PublishContext {
+                gate_used,
+                sheaf_energy_before: e_before,
+                sheaf_energy_after: e_after,
+            },
             &mut meta,
             &mut self.ops,
         );
+        stage_durations[STAGE_PUBLISH] = t.elapsed();
 
         self.gate = new_gate;
         self.tick += 1;
-        published
+        TickTrace {
+            stage_durations,
+            published,
+        }
     }
 }
 
@@ -342,14 +391,21 @@ fn handoff<'a>(
     meta: &TickMeta,
     stage: usize,
 ) -> (Lease<'a>, LineageSnapshot) {
-    assert!(input.is_published(claim), "stage input claim {claim} not published");
+    assert!(
+        input.is_published(claim),
+        "stage input claim {claim} not published"
+    );
     // SAFETY: claim is published on `input`, ticks are strictly
     // sequential in this crate, and the next lap of that slot cannot be
     // leased until this stage has finished copying (the producer of the
     // next tick runs after this tick completes).
     let data: Vec<f32> = unsafe { input.read_published(claim) }.to_vec();
     let mut lease = output.lease();
-    debug_assert_eq!(lease.claim(), claim, "rings must advance in lockstep, one claim per tick");
+    debug_assert_eq!(
+        lease.claim(),
+        claim,
+        "rings must advance in lockstep, one claim per tick"
+    );
     lease.data_mut().copy_from_slice(&data);
     meta.lineage.replay_into(&lease);
     lease.record_visit(stage);
@@ -463,13 +519,20 @@ fn stage_refine(
     (before, after)
 }
 
+/// The facts about a tick that `publish` needs but does not compute:
+/// the gate `perceive` used and `refine`'s energy pair. Bundled so
+/// the stage signature stays readable (and lint-clean).
+struct PublishContext {
+    gate_used: Viewport,
+    sheaf_energy_before: f64,
+    sheaf_energy_after: f64,
+}
+
 fn stage_publish(
     input: &FluidSubstrateBuffer,
     output: &FluidSubstrateBuffer,
     claim: u64,
-    gate_used: Viewport,
-    e_before: f64,
-    e_after: f64,
+    ctx: PublishContext,
     meta: &mut TickMeta,
     ops: &mut Ops,
 ) -> Published {
@@ -486,9 +549,9 @@ fn stage_publish(
         tick: claim,
         checksum: black_box(checksum),
         lineage: snapshot,
-        gate_used,
-        sheaf_energy_before: e_before,
-        sheaf_energy_after: e_after,
+        gate_used: ctx.gate_used,
+        sheaf_energy_before: ctx.sheaf_energy_before,
+        sheaf_energy_after: ctx.sheaf_energy_after,
         data,
     }
 }
@@ -505,7 +568,9 @@ pub struct TraceEntry {
 /// Deterministic pseudo-noise (the sibling crate's LCG).
 fn fill_pseudo(out: &mut [f32], mut state: u64) {
     for v in out.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let x = ((state >> 33) as u32) as f32 / u32::MAX as f32;
         *v = x * 2.0 - 1.0;
     }
@@ -541,9 +606,62 @@ pub fn generate_trace(entries: usize, stagger: Duration) -> Vec<TraceEntry> {
         .collect()
 }
 
+/// Generate cycles whose arrival period **drifts**: within cycle `k`
+/// every interval is `start + step * k`, so the stream's rhythm
+/// stretches cycle over cycle — the condition `rolling-adaptive`'s
+/// lens exists for, expressed in this crate's [`Cycle`] shape.
+///
+/// Built exactly like the end-to-end tests build theirs: one flat
+/// stream (hotspot payloads, arrivals accumulating the drifting
+/// period), chunked into cycles and re-based per cycle. The interval
+/// across a cycle boundary uses the *earlier* cycle's period, which
+/// is what lets [`run_rolling_adaptive`] reconstruct the flat stream
+/// from the re-based cycles without loss.
+pub fn generate_drifted_cycles(
+    cycles: usize,
+    per_cycle: usize,
+    start: Duration,
+    step: Duration,
+) -> Vec<Cycle> {
+    assert!(per_cycle >= 1, "a cycle must hold at least one entry");
+    let total = cycles * per_cycle;
+    let mut flat: Vec<TraceEntry> = Vec::with_capacity(total);
+    let mut t = Duration::ZERO;
+    for i in 0..total {
+        if i > 0 {
+            // The interval into entry i belongs to the cycle entry
+            // i-1 sits in.
+            let period = start + step * ((i - 1) / per_cycle) as u32;
+            t += period;
+        }
+        flat.push(TraceEntry {
+            arrival: t,
+            data: hotspot_payload(
+                1.0 + 0.55 * i as f32,
+                1.0 + 0.4 * i as f32,
+                0xA11CE + i as u64,
+            ),
+        });
+    }
+    flat.chunks(per_cycle)
+        .map(|chunk| {
+            let t0 = chunk[0].arrival;
+            chunk
+                .iter()
+                .map(|e| TraceEntry {
+                    arrival: e.arrival - t0,
+                    data: e.data.clone(),
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Serialise a trace in the documented v1 text format (see README).
 pub fn trace_to_string(trace: &[TraceEntry]) -> String {
-    let mut out = String::from("# rolling-trace v1\n# columns: arrival_us, then 64 payload floats (8x8 row-major)\n");
+    let mut out = String::from(
+        "# rolling-trace v1\n# columns: arrival_us, then 64 payload floats (8x8 row-major)\n",
+    );
     for e in trace {
         out.push_str(&format!("{}", e.arrival.as_micros()));
         for v in &e.data {
@@ -575,12 +693,22 @@ pub fn parse_trace(text: &str) -> Result<Vec<TraceEntry>, String> {
             .parse()
             .map_err(|_| format!("line {}: bad arrival_us", lineno + 1))?;
         let data: Vec<f32> = it
-            .map(|t| t.parse::<f32>().map_err(|_| format!("line {}: bad float {t:?}", lineno + 1)))
+            .map(|t| {
+                t.parse::<f32>()
+                    .map_err(|_| format!("line {}: bad float {t:?}", lineno + 1))
+            })
             .collect::<Result<_, _>>()?;
         if data.len() != DIM {
-            return Err(format!("line {}: expected {DIM} floats, got {}", lineno + 1, data.len()));
+            return Err(format!(
+                "line {}: expected {DIM} floats, got {}",
+                lineno + 1,
+                data.len()
+            ));
         }
-        out.push(TraceEntry { arrival: Duration::from_micros(arrival_us), data });
+        out.push(TraceEntry {
+            arrival: Duration::from_micros(arrival_us),
+            data,
+        });
     }
     if out.is_empty() {
         return Err("trace contains no entries".into());
@@ -647,10 +775,10 @@ fn run(pipe: &mut Pipeline, cycles: &[Cycle], rolling: bool) -> ScheduleReport {
     let (moves0, holds0) = (pipe.director.moves, pipe.director.holds);
 
     let emit = |now: Instant,
-                    first: &mut Option<Duration>,
-                    last_emit: &mut Option<Instant>,
-                    inter_output: &mut Vec<Duration>,
-                    outputs: &mut usize| {
+                first: &mut Option<Duration>,
+                last_emit: &mut Option<Instant>,
+                inter_output: &mut Vec<Duration>,
+                outputs: &mut usize| {
         if first.is_none() {
             *first = Some(now.duration_since(start));
         }
@@ -683,11 +811,23 @@ fn run(pipe: &mut Pipeline, cycles: &[Cycle], rolling: bool) -> ScheduleReport {
                 sample_lineage = Some(pubd.lineage);
             }
             if rolling {
-                emit(Instant::now(), &mut first, &mut last_emit, &mut inter_output, &mut outputs);
+                emit(
+                    Instant::now(),
+                    &mut first,
+                    &mut last_emit,
+                    &mut inter_output,
+                    &mut outputs,
+                );
             }
         }
         if !rolling && !cycle.is_empty() {
-            emit(Instant::now(), &mut first, &mut last_emit, &mut inter_output, &mut outputs);
+            emit(
+                Instant::now(),
+                &mut first,
+                &mut last_emit,
+                &mut inter_output,
+                &mut outputs,
+            );
         }
     }
 
@@ -715,6 +855,209 @@ fn run(pipe: &mut Pipeline, cycles: &[Cycle], rolling: bool) -> ScheduleReport {
     }
 }
 
+// ------------------------------------------------- adaptive scheduling
+
+/// Predictions are graded from this payload index on — the same
+/// warmup rule `rolling-adaptive` judges its predictors by (the lens
+/// needs its first intervals before its predictions mean anything).
+pub const RELEASE_WARMUP: usize = 2;
+
+/// One payload's release decision, in stream time (µs since the
+/// stream's first arrival): when the payload actually landed, and
+/// when the lens said it would (`None` for the first payload, which
+/// no predictor can call).
+#[derive(Debug, Clone, Copy)]
+pub struct ReleaseRecord {
+    pub actual_us: f64,
+    pub predicted_us: Option<f64>,
+}
+
+/// The lens-driven rolling run's full record: the standard
+/// [`ScheduleReport`], one [`TickTrace`] and one [`ReleaseRecord`]
+/// per payload, the graded release errors for **both** predictors on
+/// the identical stream, and the lens itself, calibrated.
+#[derive(Debug)]
+pub struct AdaptiveScheduleReport {
+    pub report: ScheduleReport,
+    pub tick_traces: Vec<TickTrace>,
+    pub releases: Vec<ReleaseRecord>,
+    /// |actual − lens prediction| per graded payload (index ≥
+    /// [`RELEASE_WARMUP`]).
+    pub release_errors_us: Vec<f64>,
+    /// |actual − fixed-stagger prediction| over the same payloads:
+    /// the control, computed on the identical stream in the same run.
+    pub fixed_release_errors_us: Vec<f64>,
+    /// The stream's lens after the run — its `est_period_us` is the
+    /// calibrated stagger the releases were driven by.
+    pub lens: LensFile,
+}
+
+impl AdaptiveScheduleReport {
+    /// (p50, p95, p99) release error for (lens, fixed control), µs.
+    pub fn release_error_stats(&self) -> ((f64, f64, f64), (f64, f64, f64)) {
+        (
+            rolling_adaptive::stats(&self.release_errors_us),
+            rolling_adaptive::stats(&self.fixed_release_errors_us),
+        )
+    }
+}
+
+/// Rolling scheduling with the release timing driven by a
+/// `rolling-adaptive` [`LensFile`] instead of the recorded arrivals:
+///
+/// * The cascade's input is treated as **one stream** (cycles tile
+///   the stream at their own measured rhythm — see below), and the
+///   lens observes every payload's arrival, causally.
+/// * Payload *k*'s release is scheduled for the lens's prediction
+///   (`last arrival + calibrated period`): the scheduler pre-stages
+///   for when the lens says the sample lands. A prediction earlier
+///   than the true arrival cannot release data that has not landed,
+///   so the release is `max(arrival, prediction)`; a late prediction
+///   delays the release by exactly its error — the consequence
+///   `rolling-adaptive`'s executor simulation grades, paid here in
+///   the real scheduler.
+/// * The fixed-stagger control (arrival *k* ≈ origin + *k* · nominal)
+///   is graded alongside on the identical stream, so the lens's
+///   prediction error and the control's are directly comparable.
+///
+/// Stream reconstruction: [`Cycle`] arrivals are relative to their
+/// cycle, so stream time is rebuilt by tiling — a cycle advances the
+/// stream clock by its span plus one of its own intervals (its span
+/// divided by its gaps; a one-entry cycle advances by the nominal
+/// period). For streams built by chunking a flat trace (this crate's
+/// generators, the end-to-end tests) the reconstruction is exact.
+///
+/// The work is untouched: same payloads, same order, same cascade as
+/// [`run_rolling`] — only the release timing differs, so outputs must
+/// be identical to the fixed-stagger baseline, and the tests assert
+/// exactly that. Waits are per-cycle relative, as in [`run`]; the
+/// lens lives in stream time, and only stream-time quantities (the
+/// release errors) are graded — never wall time.
+pub fn run_rolling_adaptive(
+    pipe: &mut Pipeline,
+    cycles: &[Cycle],
+    nominal_period: Duration,
+) -> AdaptiveScheduleReport {
+    let nominal_us = nominal_period.as_micros() as f64;
+    let mut lens = LensFile::new("pipeline-stream", nominal_us);
+
+    let start = Instant::now();
+    let mut first: Option<Duration> = None;
+    let mut last_emit: Option<Instant> = None;
+    let mut inter_output = Vec::new();
+    let mut outputs = 0usize;
+    let mut checksum = 0.0f64;
+    let (mut e_before, mut e_after) = (0.0f64, 0.0f64);
+    let mut sample_lineage = None;
+    let ops_start = pipe.ops;
+    let (moves0, holds0) = (pipe.director.moves, pipe.director.holds);
+
+    let mut tick_traces = Vec::new();
+    let mut releases = Vec::new();
+    let mut release_errors_us = Vec::new();
+    let mut fixed_release_errors_us = Vec::new();
+
+    let mut base_us = 0.0f64; // stream time of the current cycle's start
+    let mut origin_us: Option<f64> = None; // the stream's first arrival
+    let mut k = 0usize; // payload index across the whole stream
+
+    for cycle in cycles {
+        let cycle_start = Instant::now();
+        for entry in cycle {
+            let actual_us = base_us + entry.arrival.as_micros() as f64;
+            let origin = *origin_us.get_or_insert(actual_us);
+            let predicted_us = lens.predict_next_us();
+
+            // Release at the prediction, but never before the data
+            // has actually landed.
+            let release_us = predicted_us.map_or(actual_us, |p| p.max(actual_us));
+            let release_offset = Duration::from_secs_f64(
+                ((release_us - base_us) / 1e6).max(entry.arrival.as_secs_f64()),
+            );
+            // MODELLED SENSOR PERIOD: the wait models the release
+            // timing only — never computation.
+            wait_until(cycle_start, release_offset);
+
+            let traced = pipe.run_tick_traced(&entry.data);
+            checksum += traced.published.checksum;
+            e_before += traced.published.sheaf_energy_before;
+            e_after += traced.published.sheaf_energy_after;
+            if sample_lineage.is_none() {
+                sample_lineage = Some(traced.published.lineage);
+            }
+            tick_traces.push(traced);
+            releases.push(ReleaseRecord {
+                actual_us,
+                predicted_us,
+            });
+
+            if k >= RELEASE_WARMUP {
+                if let Some(p) = predicted_us {
+                    release_errors_us.push((actual_us - p).abs());
+                }
+                let fixed_pred = origin + k as f64 * nominal_us;
+                fixed_release_errors_us.push((actual_us - fixed_pred).abs());
+            }
+            lens.observe(actual_us);
+
+            let now = Instant::now();
+            if first.is_none() {
+                first = Some(now.duration_since(start));
+            }
+            if let Some(prev) = last_emit {
+                inter_output.push(now.duration_since(prev));
+            }
+            last_emit = Some(now);
+            outputs += 1;
+            k += 1;
+        }
+        // Tile the next cycle onto the stream clock: span + one of
+        // this cycle's own intervals (see the doc comment).
+        if !cycle.is_empty() {
+            let span_us = cycle
+                .iter()
+                .map(|e| e.arrival.as_micros() as f64)
+                .fold(0.0f64, f64::max);
+            let gap_us = if cycle.len() > 1 {
+                span_us / (cycle.len() - 1) as f64
+            } else {
+                nominal_us
+            };
+            base_us += span_us + gap_us;
+        }
+    }
+
+    let ops = Ops {
+        perceive_gated: pipe.ops.perceive_gated - ops_start.perceive_gated,
+        perceive_baseline: pipe.ops.perceive_baseline - ops_start.perceive_baseline,
+        decide: pipe.ops.decide - ops_start.decide,
+        direct: pipe.ops.direct - ops_start.direct,
+        refine: pipe.ops.refine - ops_start.refine,
+        publish: pipe.ops.publish - ops_start.publish,
+    };
+    AdaptiveScheduleReport {
+        report: ScheduleReport {
+            scheduler: "rolling+lens",
+            outputs,
+            time_to_first_output: first.unwrap_or_default(),
+            total: start.elapsed(),
+            checksum,
+            ops,
+            sheaf_energy_before: e_before,
+            sheaf_energy_after: e_after,
+            sample_lineage,
+            director_moves: pipe.director.moves - moves0,
+            director_holds: pipe.director.holds - holds0,
+            inter_output,
+        },
+        tick_traces,
+        releases,
+        release_errors_us,
+        fixed_release_errors_us,
+        lens,
+    }
+}
+
 // -------------------------------------------------------------------- tests
 
 #[cfg(test)]
@@ -733,7 +1076,24 @@ mod tests {
         assert_eq!(d.moves, 1);
         assert_eq!(d.center.0, c0.0 + 2, "movement clamped to max_step");
         let g = d.gate();
-        assert!(g.xmax <= WIDTH as u32 && g.ymax <= HEIGHT as u32, "gate stays in grid");
+        assert!(
+            g.xmax <= WIDTH as u32 && g.ymax <= HEIGHT as u32,
+            "gate stays in grid"
+        );
+    }
+
+    #[test]
+    fn drifted_cycles_grow_their_period() {
+        let cycles =
+            generate_drifted_cycles(4, 3, Duration::from_micros(400), Duration::from_micros(50));
+        assert_eq!(cycles.len(), 4);
+        assert!(cycles.iter().all(|c| c.len() == 3));
+        // Cycle 0 is re-based to 0 with 400 us intervals; cycle 3's
+        // intervals are 400 + 3*50 = 550 us.
+        assert_eq!(cycles[0][0].arrival, Duration::ZERO);
+        assert_eq!(cycles[0][1].arrival, Duration::from_micros(400));
+        assert_eq!(cycles[3][1].arrival, Duration::from_micros(550));
+        assert_eq!(cycles[3][2].arrival, Duration::from_micros(1100));
     }
 
     #[test]

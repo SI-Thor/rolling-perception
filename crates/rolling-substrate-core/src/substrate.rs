@@ -84,8 +84,18 @@ pub struct FluidSubstrateBuffer {
 impl FluidSubstrateBuffer {
     /// `capacity` must be a power of two. `dimension` is the number of
     /// `f32` elements per slot.
+    ///
+    /// # Panics
+    /// Panics if `capacity` is not a power of two or `dimension` is
+    /// zero. These are construction-time contract violations (the
+    /// caller picks both, typically as constants), not data-dependent
+    /// failures: the mask arithmetic below is only sound for a
+    /// power-of-two capacity.
     pub fn new(capacity: usize, dimension: usize) -> Self {
-        assert!(capacity.is_power_of_two(), "capacity must be a power of two");
+        assert!(
+            capacity.is_power_of_two(),
+            "capacity must be a power of two"
+        );
         assert!(dimension > 0, "dimension must be non-zero");
         Self {
             ring: (0..capacity).map(|i| Slot::new(i, dimension)).collect(),
@@ -96,9 +106,13 @@ impl FluidSubstrateBuffer {
         }
     }
 
+    /// Number of slots in the ring (a power of two, fixed at
+    /// construction).
     pub fn capacity(&self) -> usize {
         self.capacity
     }
+
+    /// Number of `f32` elements in each slot's data.
     pub fn dimension(&self) -> usize {
         self.dimension
     }
@@ -131,6 +145,15 @@ impl FluidSubstrateBuffer {
     /// `claim` has happened (a later lap may since have reused the
     /// slot — publication is a fact about the claim, not a guarantee
     /// that its data is still in the slot; see `read_published`).
+    ///
+    /// Era caveat: claim and sequence arithmetic is modulo 2^64 (see
+    /// [`Lease::finalize`]), so the `>` comparison is only meaningful
+    /// for claims of the *current* era. After the claim counter wraps
+    /// past 2^64 total leases, a pre-wrap claim reads as unpublished
+    /// even though it was published. At a sustained (and unrealistic)
+    /// 10^9 leases/second that boundary is ~585 years out; the wrap
+    /// behaviour itself is pinned by
+    /// `tests::claim_counter_wrap_is_modulo_2_to_the_64`.
     pub fn is_published(&self, claim: u64) -> bool {
         let index = (claim as usize) & self.mask;
         self.ring[index].sequence.load(Ordering::Acquire) > claim
@@ -147,6 +170,10 @@ impl FluidSubstrateBuffer {
     /// same honesty standard the rest of this crate applies to unsafe.
     pub unsafe fn read_published(&self, claim: u64) -> &[f32] {
         let index = (claim as usize) & self.mask;
+        // SAFETY: the caller contract above — the claim is published
+        // and no next-lap lease is writing this slot — is exactly the
+        // condition under which forming a shared reference to the
+        // slot's `UnsafeCell` contents is sound.
         &*self.ring[index].data.get()
     }
 }
@@ -160,9 +187,12 @@ pub struct Lease<'a> {
 }
 
 impl<'a> Lease<'a> {
+    /// The global sequence this lease claimed.
     pub fn claim(&self) -> u64 {
         self.claim
     }
+
+    /// The ring slot this lease owns (`claim & (capacity - 1)`).
     pub fn index(&self) -> usize {
         self.index
     }
@@ -182,6 +212,7 @@ impl<'a> Lease<'a> {
         self.buffer.ring[self.index].lineage.record(node);
     }
 
+    /// The slot's lineage header (cleared when the lease was taken).
     pub fn lineage(&self) -> &LineageHeader {
         &self.buffer.ring[self.index].lineage
     }
@@ -189,8 +220,18 @@ impl<'a> Lease<'a> {
     /// Publish the slot and end the lease.
     pub fn finalize(self) {
         let slot = &self.buffer.ring[self.index];
-        slot.sequence
-            .store(self.claim + self.buffer.capacity as u64, Ordering::Release);
+        // `wrapping_add`, deliberately: claim/sequence arithmetic is
+        // modulo 2^64 by design. `capacity` is a power of two, so it
+        // divides 2^64 and slot selection (`claim & mask`) and the
+        // sequence equality the next lap spins on stay consistent
+        // across the wrap. Plain `+` would panic on overflow in debug
+        // builds at the era boundary while wrapping silently in
+        // release — the protocol must not depend on the build profile.
+        // Pinned by `tests::claim_counter_wrap_is_modulo_2_to_the_64`.
+        slot.sequence.store(
+            self.claim.wrapping_add(self.buffer.capacity as u64),
+            Ordering::Release,
+        );
     }
 }
 
@@ -251,6 +292,49 @@ mod tests {
         assert_eq!(l.index(), 0);
         assert!(!l.lineage().visited(5));
         l.finalize();
+    }
+
+    #[test]
+    fn claim_counter_wrap_is_modulo_2_to_the_64() {
+        // Boundary behaviour at the claim counter's u64 wrap, seeded
+        // directly (2^64 real leases are not a test plan). Protocol
+        // claim, verified here: lease/finalize stay consistent across
+        // the wrap because capacity (4) divides 2^64 — every slot's
+        // next expected sequence is exactly the claim that leases it,
+        // on both sides of the boundary. `is_published`, however, is
+        // era-local (its `>` comparison cannot see across the wrap) —
+        // that limitation is pinned below, not hidden.
+        use std::sync::atomic::Ordering as O;
+        let buf = FluidSubstrateBuffer::new(4, 2);
+        // Claims to come: MAX-1 -> slot 2, MAX -> slot 3, 0 -> slot 0,
+        // 1 -> slot 1. Pre-set each slot's sequence to the claim that
+        // will lease it, as the previous lap's finalize would have.
+        buf.ring[2].sequence.store(u64::MAX - 1, O::SeqCst);
+        buf.ring[3].sequence.store(u64::MAX, O::SeqCst);
+        // Slots 0 and 1 already hold sequences 0 and 1 from `new`.
+        buf.next_claim.store(u64::MAX - 1, O::SeqCst);
+
+        let expected_claims = [u64::MAX - 1, u64::MAX, 0, 1];
+        for (k, &want) in expected_claims.iter().enumerate() {
+            let mut lease = buf.lease();
+            assert_eq!(lease.claim(), want, "claim {k} across the wrap");
+            lease.data_mut().fill(want as f32);
+            lease.finalize();
+        }
+        // Current-era claims read as published, and their data is
+        // intact after the wrap.
+        assert!(buf.is_published(0));
+        assert!(buf.is_published(1));
+        // SAFETY: claims 0 and 1 are published; their slots' next laps
+        // (claims 4 and 5) have not been leased.
+        assert!(unsafe { buf.read_published(0) }.iter().all(|&v| v == 0.0));
+        assert!(unsafe { buf.read_published(1) }.iter().all(|&v| v == 1.0));
+        // Pinned limitation: the pre-wrap claim WAS finalized, but
+        // `is_published` reports false for it in the new era (slot 3's
+        // sequence wrapped to 3, and 3 > u64::MAX is false). Callers
+        // must not query publication across an era boundary — see the
+        // `is_published` docs.
+        assert!(!buf.is_published(u64::MAX));
     }
 
     #[test]

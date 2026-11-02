@@ -30,7 +30,10 @@ fn main() {
                 let t0 = chunk[0].arrival;
                 chunk
                     .iter()
-                    .map(|e| TraceEntry { arrival: e.arrival - t0, data: e.data.clone() })
+                    .map(|e| TraceEntry {
+                        arrival: e.arrival - t0,
+                        data: e.data.clone(),
+                    })
                     .collect()
             })
             .collect()
@@ -41,7 +44,10 @@ fn main() {
                 let t0 = chunk[0].arrival;
                 chunk
                     .iter()
-                    .map(|e| TraceEntry { arrival: e.arrival - t0, data: e.data.clone() })
+                    .map(|e| TraceEntry {
+                        arrival: e.arrival - t0,
+                        data: e.data.clone(),
+                    })
                     .collect()
             })
             .collect()

@@ -61,6 +61,61 @@ and total checksum are asserted identical across the two — scheduling
 is the only variable. The only `sleep` models sensor arrivals and is
 labelled as such at the call site.
 
+## Composition: adaptive timing + the executor seam
+
+The wave crates were built as separate demos; this crate is where
+two of them stop being demos and start composing.
+
+**Adaptive → pipeline.** The schedulers above release payloads on
+their *recorded* arrivals — a fixed-stagger assumption wearing the
+trace as a costume. `run_rolling_adaptive` instead drives release
+timing from `rolling-adaptive`'s `LensFile`: the cascade's input is
+treated as one stream, the lens observes every arrival causally,
+and each payload is released at the lens's prediction
+(`max(arrival, prediction)` — an early prediction cannot release
+data that has not landed; a late one delays the release by exactly
+its error, the consequence the sibling crate's executor simulation
+grades). Work, order and outputs are untouched, so the connected
+system must publish bit-for-bit what the fixed-stagger baseline
+publishes — and the test asserts it does. Measured under injected
+drift (period 400 µs growing 25 µs/cycle to 675 µs, 60 payloads,
+`tests/composition.rs`): per-payload checksums and counted ops
+identical to the baseline, while release-prediction p95 is
+**60.5 µs for the lens vs 7,425.0 µs for the fixed-stagger control**
+graded on the identical stream in the same run; the lens's period
+estimate ends at 635.1 µs against the true 675 µs. `rolling-adaptive`
+needed no API additions — `LensFile::{predict_next_us, observe}` and
+its `stats` were already the right surface.
+
+**CUDA shadow → substrate, at the seam.** `src/executor.rs` is the
+trait seam where the GPU backend lands: an `Executor` turns one
+payload into one `Published` under a stated contract (identical
+outputs, complete lineage, non-increasing sheaf energy, counted
+ops). `Pipeline` implements it as `"cpu-rings"`, the shipped
+backend. The module's execution notes record how the Thor spikes'
+**two-stream shadow** arrangement (production stream + shadow
+stream, host one slice ahead; persistent kernels lose for slice
+work) maps onto the stages: perceive/decide kernels to the
+production stream, refine shadow-verified against the CPU Laplacian
+before it is trusted, direct/publish staying on CPU as the audit
+record. Behind the off-by-default `gpu-shadow` cargo feature,
+`GpuShadowExecutor` is the specified stub — it compiles, declares
+its capabilities, and refuses every tick with a typed
+`ExecutorError::NoGpuBackend`. No fake GPU work anywhere.
+
+**One end-to-end demo.** `src/bin/endtoend.rs` runs the whole
+composition over the fixture stream and prints the per-tick trace
+(stage durations, lineage mask, sheaf energy before/after, release
+error, checksum) that `tests/composition.rs` asserts invariants
+over (mask `11111` and energy down on *every* tick; verdict set
+equal to the plain sequential cascade's):
+
+```sh
+cargo run --release -p rolling-pipeline --bin endtoend
+cargo test  -p rolling-pipeline          # 12 tests, incl. composition
+cargo check -p rolling-pipeline --features gpu-shadow   # the seam's stub
+```
+
 ## Trace files (file-replay producer)
 
 Format **rolling-trace v1**, plain text:

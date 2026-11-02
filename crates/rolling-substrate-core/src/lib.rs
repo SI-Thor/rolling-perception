@@ -17,6 +17,8 @@
 //! No external crates. No GPU. No mocked latency: there is no
 //! `thread::sleep` standing in for compute anywhere in this crate.
 
+#![warn(missing_docs)]
+
 pub mod gating;
 pub mod lineage;
 pub mod sheaf;

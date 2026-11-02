@@ -45,7 +45,15 @@ pub struct SheafGraph {
 }
 
 impl SheafGraph {
-    /// Graph from an explicit edge list. Panics on out-of-range nodes.
+    /// Graph from an explicit edge list. Duplicate edges are kept and
+    /// count with multiplicity (a multigraph Laplacian — `energy` and
+    /// `laplacian_apply` stay mutually consistent either way).
+    ///
+    /// # Panics
+    /// Panics if any edge has an endpoint `>= n` or is a self-loop.
+    /// Both are construction-time contract violations: the indexing in
+    /// `energy`/`laplacian_apply` is provably in-range precisely
+    /// because this constructor rejects such edges once, up front.
     pub fn from_edges(n: usize, edges: Vec<(usize, usize)>) -> Self {
         for &(i, j) in &edges {
             assert!(i < n && j < n, "edge ({i},{j}) out of range for n={n}");
@@ -67,15 +75,23 @@ impl SheafGraph {
         Self::from_edges(n, (0..n - 1).map(|i| (i, i + 1)).collect())
     }
 
+    /// Number of section nodes.
     pub fn n(&self) -> usize {
         self.n
     }
+
+    /// The edge list, as given at construction.
     pub fn edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
 
     /// Consistency energy `E(s) = s^T L s = Σ_edges (s_i − s_j)²`.
     /// Zero iff `s` is constant on each connected component.
+    ///
+    /// # Panics
+    /// Panics if `s.len() != self.n()` — a section of the wrong width
+    /// is a caller bug, and one clear assert beats an index panic
+    /// from inside the edge loop.
     pub fn energy(&self, s: &[f64]) -> f64 {
         assert_eq!(s.len(), self.n);
         self.edges
@@ -88,6 +104,10 @@ impl SheafGraph {
     }
 
     /// Apply the Laplacian: `(L s)_i = deg(i)·s_i − Σ_{j~i} s_j`.
+    ///
+    /// # Panics
+    /// Panics if `s.len() != self.n()`, same contract as
+    /// [`Self::energy`].
     pub fn laplacian_apply(&self, s: &[f64]) -> Vec<f64> {
         assert_eq!(s.len(), self.n);
         let mut out = vec![0.0f64; self.n];
@@ -100,6 +120,18 @@ impl SheafGraph {
 
     /// One gradient/projection step `s <- s − α·L s`.
     /// Returns the energy *before* the step.
+    ///
+    /// `alpha` is the caller's contract: energy is guaranteed to not
+    /// increase only for `0 < alpha < 2 / λ_max(L)` (see the module
+    /// docs; `alpha <= 1 / (2 · max_degree)` is a safe sufficient
+    /// bound for any graph). Outside that range the step can increase
+    /// energy or diverge — it is a step-size constant chosen by the
+    /// caller, not data, so it is documented rather than checked on
+    /// this per-step path.
+    ///
+    /// # Panics
+    /// Panics if `s.len() != self.n()`, same contract as
+    /// [`Self::energy`].
     pub fn smooth_step(&self, s: &mut [f64], alpha: f64) -> f64 {
         let before = self.energy(s);
         let ls = self.laplacian_apply(s);
@@ -111,6 +143,10 @@ impl SheafGraph {
 
     /// `steps` smoothing steps; returns the energy trajectory,
     /// including the initial energy (length `steps + 1`).
+    ///
+    /// # Panics
+    /// Panics if `s.len() != self.n()`, same contract as
+    /// [`Self::energy`].
     pub fn smooth(&self, s: &mut [f64], alpha: f64, steps: usize) -> Vec<f64> {
         let mut traj = Vec::with_capacity(steps + 1);
         traj.push(self.energy(s));
@@ -132,7 +168,10 @@ mod tests {
         let mut s = vec![3.25f64; 8];
         assert_eq!(g.energy(&s), 0.0);
         g.smooth_step(&mut s, 0.1);
-        assert!(s.iter().all(|&v| v == 3.25), "consistent state must not be mangled");
+        assert!(
+            s.iter().all(|&v| v == 3.25),
+            "consistent state must not be mangled"
+        );
     }
 
     #[test]
@@ -151,9 +190,17 @@ mod tests {
         let mut s: Vec<f64> = (0..16).map(|i| ((i * 7) % 5) as f64 - 2.0).collect();
         let traj = g.smooth(&mut s, 0.1, 20);
         for w in traj.windows(2) {
-            assert!(w[1] < w[0], "energy must strictly decrease: {} -> {}", w[0], w[1]);
+            assert!(
+                w[1] < w[0],
+                "energy must strictly decrease: {} -> {}",
+                w[0],
+                w[1]
+            );
         }
-        assert!(traj[20] < traj[0] * 0.01, "should be near-consistent after 20 steps");
+        assert!(
+            traj[20] < traj[0] * 0.01,
+            "should be near-consistent after 20 steps"
+        );
     }
 
     #[test]

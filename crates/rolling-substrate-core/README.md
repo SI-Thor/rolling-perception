@@ -16,8 +16,11 @@ were mocks. See `src/lib.rs` for the claim-by-claim table.
 From **this crate's directory** (`crates/rolling-substrate-core/`):
 
 ```sh
-cargo test   # 23 tests, this crate only
-             # (from the repository root, cargo test runs all 29 workspace tests)
+cargo test   # 32 tests, this crate only (27 unit + 5 randomised property
+             # tests in tests/properties.rs)
+             # (from the repository root, cargo test runs the whole
+             # workspace suite — 75 tests at the time of the 2026-11-01
+             # hardening pass; see HARDENING.md)
 ```
 
 On the Thor over SSH, first:

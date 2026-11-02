@@ -15,6 +15,8 @@
 //! Without the feature this crate is the CPU reference and its tests, and
 //! builds anywhere.
 
+#![warn(missing_docs)]
+
 /// Perceive-filter kernel source, shared verbatim by the CPU reference and
 /// the NVRTC compile so the two cannot drift apart semantically.
 /// Variant A: symmetric 3-tap smoothing filter.
@@ -29,6 +31,8 @@ extern "C" __global__ void perceive(const float* __restrict__ in, float* __restr
     out[i] = 0.25f*in[lo] + 0.5f*in[i] + 0.25f*in[hi];
 }"#;
 
+/// Variant B kernel source: asymmetric filter (see [`KERNEL_A`] for
+/// the sharing rationale).
 pub const KERNEL_B: &str = r#"
 extern "C" __global__ void perceive(const float* __restrict__ in, float* __restrict__ out, int n){
     int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -40,11 +44,16 @@ extern "C" __global__ void perceive(const float* __restrict__ in, float* __restr
 /// Which kernel variant a module was compiled from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
+    /// Symmetric 3-tap smoothing filter ([`KERNEL_A`]).
     A,
+    /// Asymmetric filter ([`KERNEL_B`]) — spike 3's wrong-module
+    /// detector: its output differs measurably from A's.
     B,
 }
 
 impl Variant {
+    /// The CUDA source for this variant ([`KERNEL_A`] or
+    /// [`KERNEL_B`]).
     pub fn source(&self) -> &'static str {
         match self {
             Variant::A => KERNEL_A,
@@ -78,6 +87,8 @@ pub fn reference_b(input: &[f32]) -> Vec<f32> {
     out
 }
 
+/// CPU reference for either variant — dispatches to
+/// [`reference_a`] / [`reference_b`].
 pub fn reference(variant: Variant, input: &[f32]) -> Vec<f32> {
     match variant {
         Variant::A => reference_a(input),
@@ -104,9 +115,21 @@ pub fn test_input(n: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Max absolute difference between two slices (0 if lengths differ is
-/// treated as infinite error by callers checking lengths first).
+/// Max absolute difference between two equal-length slices.
+///
+/// Contract: the slices must have equal length. With unequal lengths
+/// the comparison silently covers only the common prefix (`zip`
+/// semantics) — a too-short `b` could hide an arbitrarily wrong tail.
+/// Every caller in this crate compares a GPU readback against the
+/// reference for the *same* `n`, so the lengths are equal by
+/// construction; the `debug_assert` pins that in debug builds, and
+/// the property tests pin the equal-length behaviour.
 pub fn max_abs_err(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(
+        a.len(),
+        b.len(),
+        "max_abs_err compares a common prefix only — lengths must match"
+    );
     a.iter()
         .zip(b.iter())
         .map(|(x, y)| (x - y).abs())

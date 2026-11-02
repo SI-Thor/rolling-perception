@@ -30,6 +30,8 @@ its first three slices are built and measured:
 **Start with `docs/READING-GUIDE.md`** for the map, and
 **`docs/RESULTS.md`** for every headline number with its source —
 deficits included at the same prominence as the wins.
+**The engine's own book is `docs/ARCHITECTURE.md`** — crate map,
+claim→proof tracing, invariants ledger.
 
 ## Prerequisites
 
@@ -54,9 +56,11 @@ From the **repository root**:
 
 ```sh
 cargo test --release
-# expect: 55 passed total — 6 (rolling-perception) + 23 (rolling-substrate-core)
-#         + 6 (rolling-pipeline: 3 unit + 3 integration) + 6 (rolling-adaptive)
-#         + 3 (cuda-thor CPU reference; its GPU tests need the Thor, see crates/cuda-thor)
+# expect: 75 passed total — 6 (rolling-perception) + 32 (rolling-substrate-core:
+#         27 unit + 5 seeded property tests) + 12 (rolling-pipeline: 6 unit
+#         + 3 integration + 3 composition) + 6 (rolling-adaptive)
+#         + 8 (cuda-thor CPU: 3 reference + 5 property; its GPU tests need the
+#         Thor, see crates/cuda-thor)
 #         + 8 (harbor-watch, the wave-3 real-workload crate) + 3 (slice1/core: confluence-watch live service)
 
 cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
@@ -67,9 +71,9 @@ cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
 ```
 
 Scope, because the same words do different things in different folders:
-`cargo test` at the root tests **all** crates (55 tests); inside
+`cargo test` at the root tests **all** crates (75 tests); inside
 `crates/rolling-perception/` it tests 6; inside
-`crates/rolling-substrate-core/` it tests 23. `cargo run` needs
+`crates/rolling-substrate-core/` it tests 32. `cargo run` needs
 `-p rolling-perception` at the root (or run it from that crate's folder).
 
 ### CUDA experiments (Thor only)
@@ -130,7 +134,7 @@ What each experiment means, and the numbers to expect, are in
   change detection over real I-JEPA tile embeddings at full 1280-dim
   on the substrate rings; see `docs/WAVE3.md`.
 - `experiments/wave3/` — the wave-3 driver (Thor, JEV rack), the
-  reflective-judge lane (TypeSafe Jev — runner ready, unmeasured),
+  reflective-judge lane (TypeSafe Jev — measured: advisory seat, not the gate),
   and the HTML report tool that renders verdicts for a human.
 - `experiments/thor-cuda` — the Thor play session, sources + `PLAYLOG.md`
   (including the bench bug that lied, and how it was caught), plus the

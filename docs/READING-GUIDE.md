@@ -5,6 +5,10 @@ working stream platform. It is organised the way it was built: the
 engine first, then the workload, then the product. This guide is the
 map Casey asked for — everything pushed, nothing held back locally.
 
+**The book:** `docs/ARCHITECTURE.md` — the engine-level map of the
+crates, every load-bearing claim in `PLAN.md`/`DESIGN.md` traced to
+its test or marked unproven, and the per-crate invariants ledger.
+
 ## The story in five stops
 
 1. **The seed and the honest rebuild** — `PLAN.md` grades the original
@@ -57,7 +61,7 @@ map Casey asked for — everything pushed, nothing held back locally.
   state beats held samples 8–18× for late readers; snap rule v2
   with a decontaminated band).
 
-## Crates (the engine, 55 workspace tests)
+## Crates (the engine, 75 workspace tests)
 
 | crate | what it is |
 |---|---|

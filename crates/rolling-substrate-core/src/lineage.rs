@@ -53,6 +53,7 @@ pub struct LineageHeader {
 }
 
 impl LineageHeader {
+    /// A fresh header: nothing visited, all counts zero.
     pub fn new() -> Self {
         Self {
             visited_mask: AtomicU64::new(0),
@@ -83,6 +84,10 @@ impl LineageHeader {
         }
     }
 
+    /// True iff `node` has been recorded at least once.
+    ///
+    /// # Panics
+    /// Panics on `node >= 64`, same contract as [`Self::record`].
     pub fn visited(&self, node: usize) -> bool {
         assert!(node < MAX_NODES, "node id {node} exceeds bitmask");
         self.visited_mask.load(Ordering::Acquire) & (1u64 << node) != 0
@@ -98,6 +103,7 @@ impl LineageHeader {
         }
     }
 
+    /// The raw visited bitmask: bit `n` set iff node `n` ran.
     pub fn visited_mask(&self) -> u64 {
         self.visited_mask.load(Ordering::Acquire)
     }
@@ -127,6 +133,14 @@ pub mod pir_legacy {
         state.wrapping_mul(prime)
     }
     /// `history % prime == 0` — exactly the email's query.
+    ///
+    /// Kept verbatim on purpose (hence the clippy allow): this module
+    /// is a faithful counterexample, and `%`-vs-`is_multiple_of` is
+    /// not merely stylistic here — `is_multiple_of(0)` is defined as
+    /// `state == 0` where the email's `%` panics. Precondition, as in
+    /// the email: `prime` is one of the node primes, i.e. non-zero;
+    /// `visited(_, 0)` divides by zero and panics.
+    #[allow(clippy::manual_is_multiple_of)]
     pub fn visited(state: u64, prime: u64) -> bool {
         state % prime == 0
     }
@@ -214,5 +228,30 @@ mod tests {
         h.record(40);
         assert!(h.visited(40));
         assert_eq!(h.count(40), None);
+    }
+
+    #[test]
+    fn counts_saturate_at_u32_max_instead_of_wrapping() {
+        // Boundary behaviour, seeded directly (4 billion real visits
+        // are not a test plan): at the cap the counter must pin at
+        // u32::MAX — a wrap to 0 would read as "never visited with a
+        // count of 0" while the visited bit says otherwise.
+        let h = LineageHeader::new();
+        h.counts[0].store(u32::MAX - 1, Ordering::SeqCst);
+        h.record(0);
+        assert_eq!(h.count(0), Some(u32::MAX));
+        h.record(0);
+        h.record(0);
+        assert_eq!(h.count(0), Some(u32::MAX), "count must saturate, not wrap");
+        assert!(h.visited(0));
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds bitmask")]
+    fn record_at_max_nodes_panics() {
+        // The fence on the other side of the boundary: node 63 is the
+        // last legal id (see the property tests), 64 is a loud
+        // contract failure, never a silent drop.
+        LineageHeader::new().record(MAX_NODES);
     }
 }

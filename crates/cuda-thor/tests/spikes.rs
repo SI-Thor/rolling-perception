@@ -47,8 +47,15 @@ fn spike3_thousand_swaps_epoch_retirement_no_leak() {
     assert_eq!(warm.retirements, 200);
     let r = gpu::spike3(1000).expect("spike 3 must run on the Thor");
     assert_eq!(r.epochs_verified, 1000, "every epoch must be verified");
-    assert!(r.all_within_tol, "max_err {} exceeds tol {}", r.max_err, TOL);
-    assert_eq!(r.retirements, 1000, "every module must be retired exactly once");
+    assert!(
+        r.all_within_tol,
+        "max_err {} exceeds tol {}",
+        r.max_err, TOL
+    );
+    assert_eq!(
+        r.retirements, 1000,
+        "every module must be retired exactly once"
+    );
     assert!(
         r.free_delta_bytes > -(384 * 1024 * 1024),
         "possible module leak beyond instrument noise: free memory delta {} B over 1000 swaps",

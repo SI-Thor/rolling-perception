@@ -1,5 +1,9 @@
 # QUICKSTART-TEST — literal follow-through, on the Thor
 
+> **Update note (2026-11-01, doc sweep):** dated pass record. The
+> "29 tests" figures below describe the workspace as it stood during
+> this pass; it has since grown to **55 tests** across seven members.
+
 Method: the repo (staging tree = commit `d528ba5` content) was copied
 to the Thor at `~/rolling-perception-play/quickstart-test/` and a
 stranger pass followed **only** what the docs in that tree actually

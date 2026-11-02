@@ -91,6 +91,9 @@ tell apart tests nothing.
 - Per-stream gate calibration against the phone's real scene
   (gate 3.0 is busy-material-tolerant, quiet-scene-rough; the lens
   carries it as a per-stream value).
-- The 48 h soak for the Slice-1 precision acceptance runs on the
-  real phone feed once hooked up; the soak mode + stop file +
-  self-report placeholders are in place for it.
+- The 48 h soak for the Slice-1 precision acceptance: **update
+  2026-11-01** — the soak is running (started 2026-11-01 18:18 AKST)
+  on the ProArt webcam stand-in via outbound push, because the phone
+  was off the LAN when Casey stepped away; see
+  `../PROART-CAMERA.md`. The phone remains the reference node and
+  this hookup is still the path it will use.
