@@ -1,0 +1,1 @@
+USAGE: {"prompt_tokens": 23087, "total_tokens": 29940, "completion_tokens": 6853, "estimated_cost": 0.036393911, "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": null}, "completion_tokens_details": {"reasoning_tokens": 4800}}
