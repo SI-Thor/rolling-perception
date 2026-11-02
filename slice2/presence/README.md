@@ -346,3 +346,22 @@ ledger view; the soak's files were never written).
 - Known wart visible in the performed reply: the 64-token cap
   clipped the final sentence mid-phrase ("at 11:"). Brevity
   enforcement stays, the cap/trim interplay needs a cleaner cut.
+  FIXED 2026-11-02 (presence polish, deployed live the same
+  day): `cap_trim` in presence.py — ask_brain now returns the
+  finish reason, and when generation stops at the cap
+  (finish_reason "length") the reply is cut back to its last
+  complete sentence (claims.py's segmentation, reused) before
+  the brevity trim, the fences, or TTS see it; if no complete
+  sentence survived the cap, the template truth speaks instead
+  of a fragment. Receipts record grounding.cap_trimmed /
+  cap_no_sentence / finish_reason on every turn.
+- The insecure-context failure above is also FIXED 2026-11-02
+  (the page half of the product requirement; the certificate
+  story itself remains open): index.html detects
+  !window.isSecureContext / missing mediaDevices at load,
+  shows the reason in words in the status area ("This browser
+  won't share its microphone on a plain http address — open
+  this page via https or allow this origin in the browser's
+  site settings."), and disables the talk controls instead of
+  leaving a dead button; a getUserMedia refusal at press time
+  surfaces in the same notice area.

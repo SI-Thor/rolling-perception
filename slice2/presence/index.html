@@ -29,6 +29,12 @@
   .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em;
     color:#8a94a0; margin:0 0 6px; }
   .card p { margin:0; font-size:16px; line-height:1.45; white-space:pre-wrap; }
+  #mic-notice { width:min(560px,92vw); box-sizing:border-box;
+    background:#3a2c12; border:1px solid #8a6d1f; color:#f5d98a;
+    border-radius:10px; padding:12px 14px; margin-bottom:16px;
+    font-size:15px; line-height:1.45; }
+  #talk:disabled { background:#3a4350; cursor:not-allowed; }
+  #mode:disabled { cursor:not-allowed; opacity:.5; }
 </style>
 </head>
 <body>
@@ -39,6 +45,8 @@
   <div id="presence-live-indicator" aria-live="polite">
     <span id="dot"></span><span id="state-label">Idle — not listening</span>
   </div>
+
+  <div id="mic-notice" role="alert" hidden></div>
 
   <button id="talk">Hold to talk</button>
   <button id="mode">switch to tap-to-toggle</button>
@@ -55,9 +63,36 @@ let recorder = null, chunks = [], tapMode = false, recording = false;
 
 function setState(cls, text) { dot.className = cls; label.textContent = text; }
 
+// Microphone reality check, at load. On a plain-http LAN address
+// the browser exposes no navigator.mediaDevices at all, and the
+// talk button used to fail silently (hit cold from the chair,
+// 2026-11-02). Say so in words, in the status area, and disable
+// the controls instead of leaving a dead button.
+const micNotice = document.getElementById('mic-notice');
+if (!window.isSecureContext || !(navigator.mediaDevices
+    && navigator.mediaDevices.getUserMedia)) {
+  micNotice.textContent = "This browser won't share its microphone " +
+    "on a plain http address — open this page via https or allow " +
+    "this origin in the browser's site settings.";
+  micNotice.hidden = false;
+  setState('', 'Microphone unavailable');
+  talkBtn.disabled = true;
+  modeBtn.disabled = true;
+}
+
 async function startRec() {
   if (recording) return;
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    micNotice.textContent = 'The browser refused the microphone. ' +
+      "Check this site's microphone permission in the browser's " +
+      'site settings, then try again.';
+    micNotice.hidden = false;
+    setState('', 'Microphone unavailable');
+    return;
+  }
   chunks = [];
   recorder = new MediaRecorder(stream);
   recorder.ondataavailable = e => chunks.push(e.data);

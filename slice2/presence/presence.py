@@ -37,7 +37,13 @@ Config (env):
   BRAIN_MAX_TOKENS  default 64 — the winner writes briefings, not
                  table talk; brevity is also enforced post-generation
                  (trim_reply: 2 sentences / 45 words) because TTS is
-                 the loop's scarcest stage.
+                 the loop's scarcest stage. When generation stops AT
+                 the cap (finish_reason "length") the text can end
+                 mid-sentence; cap_trim then cuts it back to the
+                 last complete sentence before any other stage sees
+                 it — or, if no complete sentence survived, the
+                 template truth speaks instead of a fragment. The
+                 receipts record it (grounding.cap_trimmed).
   STALE_TOLERANCE_S default 90 — a stream whose heartbeat is older
                  than its lens tolerance (lens.txt
                  heartbeat_tolerance_s wins when present) is rendered
@@ -321,6 +327,32 @@ def trim_reply(text, max_sentences=2, max_words=45):
     return out, out != text
 
 
+_SENT_END = re.compile(r"[.!?][\"')\]]*$")
+
+
+def cap_trim(text, finish_reason):
+    """Token-cap discipline (2026-11-02 polish). When generation
+    stops at BRAIN_MAX_TOKENS (finish_reason "length"), the text
+    can end mid-sentence — the from-the-chair acceptance reply was
+    clipped to "...both reported changes at 11:". A fragment is
+    never spoken: cut the text back to its last COMPLETE sentence
+    (sentence segmentation is claims.py's, reused) before trim,
+    fences, or TTS see it. Returns (text, trimmed). If no complete
+    sentence survived the cap, returns ("", True) and the caller
+    takes the template-truth path. A capped reply that happens to
+    end exactly at a sentence boundary is returned untouched."""
+    if finish_reason != "length":
+        return text, False
+    text = " ".join(text.split())
+    if not text or _SENT_END.search(text):
+        return text, False
+    sentences = claim_check_mod._sentences(text)
+    complete = [s for s in sentences if _SENT_END.search(s)]
+    if len(complete) == len(sentences):
+        return text, False
+    return " ".join(complete), True
+
+
 def grounding_check(reply, meta, transcript):
     """Return a violation dict, or None if the reply is grounded.
     Allowed numbers: any number rendered in the digest, plus any
@@ -373,12 +405,16 @@ def transcribe(audio):
 
 
 def ask_brain(transcript, digest):
+    """Returns (reply_text, finish_reason) — the caller needs the
+    finish reason to tell a completed reply from one the token cap
+    cut off mid-sentence (see cap_trim). The stub hook reports
+    finish_reason "stub": no generation happened there."""
     stub = os.environ.get("PRESENCE_BRAIN_STUB_FILE")
     if stub:  # test hook: force a brain output (acceptance_v3 traps)
         try:
             forced = Path(stub).read_text().strip()
             if forced:
-                return forced
+                return forced, "stub"
         except OSError:
             pass
     hist = ""
@@ -403,7 +439,9 @@ def ask_brain(transcript, digest):
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
         data = json.loads(r.read())
-    return data["choices"][0]["message"]["content"].strip()
+    choice = data["choices"][0]
+    return choice["message"]["content"].strip(), \
+        choice.get("finish_reason") or ""
 
 
 # ---------- TTS: resident Piper worker, spawn fallback -------------------
@@ -613,11 +651,13 @@ async def hear(audio: UploadFile = File(...)):
     timings["digest_ms"] = round((time.perf_counter() - t0) * 1000)
 
     t0 = time.perf_counter()
-    reply_raw = ask_brain(transcript, digest)
+    reply_raw, finish_reason = ask_brain(transcript, digest)
     timings["brain_ms"] = round((time.perf_counter() - t0) * 1000)
 
-    # Grounding pipeline, all outside the model (v3): trim to spoken
-    # size, then the CLAIM CHECKER fences the prose v2 couldn't —
+    # Grounding pipeline, all outside the model (v3): cap-trim a
+    # token-capped generation back to its last complete sentence,
+    # trim to spoken size, then the CLAIM CHECKER fences the prose
+    # v2 couldn't —
     # stream-state claims checked against the digest's computed
     # stream states, entity misuse (event id as stream, stream name
     # as event, unknown stream) — failed sentences are replaced with
@@ -626,12 +666,18 @@ async def hear(audio: UploadFile = File(...)):
     # the claim-checked text and still replaces wholesale on a miss.
     # Citations stay in the written reply (and the page); the spoken
     # text drops the brackets — nobody talks in [ids].
-    reply, trimmed = trim_reply(reply_raw)
+    reply_capped, cap_trimmed = cap_trim(reply_raw, finish_reason)
+    cap_no_sentence = cap_trimmed and not reply_capped
+    reply, trimmed = trim_reply(reply_capped)
     reply_pre_claims = reply
     reply, claim_violations = claim_check_mod.check_claims(reply, meta)
     violation = grounding_check(reply, meta, transcript)
     replaced = violation is not None
-    if replaced:
+    if replaced or cap_no_sentence:
+        # Cap fallback: generation hit the token cap before one
+        # complete sentence survived — the template truth speaks
+        # rather than a fragment (recorded via cap_no_sentence in
+        # the receipt, distinct from a grounding replacement).
         reply = SAFE_REPLY
     cited = [c.strip() for c in re.findall(r"\[([^\]]+)\]", reply)]
     spoken = re.sub(r"\[[^\]]+\]\s*", "", reply).strip() or reply
@@ -649,7 +695,10 @@ async def hear(audio: UploadFile = File(...)):
     grounding = {"violation": violation, "replaced": replaced,
                  "claim_violations": claim_violations,
                  "claims_replaced": bool(claim_violations),
-                 "trimmed": trimmed, "cited_ids": cited,
+                 "trimmed": trimmed, "cap_trimmed": cap_trimmed,
+                 "cap_no_sentence": cap_no_sentence,
+                 "finish_reason": finish_reason,
+                 "cited_ids": cited,
                  "digest_ids": meta["ids"],
                  "not_reporting": meta["not_reporting"]}
     receipt({"ts": round(time.time(), 1), "transcript": transcript,
