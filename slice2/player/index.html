@@ -95,9 +95,11 @@ async function play(id){
     return;
   }
   currentSid = s.session;
-  banner.className = 'banner ' + (s.mode === 'remux' ? 'direct' : 'transcoding');
+  banner.className = 'banner ' + (s.mode === 'transcode' ? 'transcoding' : 'direct');
   banner.querySelector('.mode').textContent = s.mode === 'remux'
     ? 'Direct play — remuxed on the Thor, no encode spent'
+    : s.mode === 'fmp4'
+    ? 'Direct play — HEVC remuxed to fMP4 HLS on the Thor, no encode spent'
     : 'Transcoding on the Thor';
   pollTimer = setInterval(() => pollSession(s), 1000);
   pollSession(s, true);

@@ -85,3 +85,40 @@ SERVICE-CARD, and this repo's measured records.
    none until one is fetched (the BRAIN-BENCH winner is the
    default); the historical `:8001` brain endpoint is not part of
    a fresh install and nothing should expect it.
+
+## Resolution — S2 cleared (2026-11-02, FIXTURES lane)
+
+The blocker above is fixed in the staging tree:
+
+- **Fixtures bundled** at `slice1/core/fixtures/` (3.35 MB):
+  six wave-3 burst photos (`wave3/A-00..05.png`), six turntable
+  frames (`wave3/B-00..05.png`), and the staged rig's object
+  patch (`patch.png`, a crop of A-03 at the original placement
+  rectangle). Provenance: the project's own wave-3 frames,
+  recovered from the base64 copies embedded in
+  `experiments/wave3/report/report-C-real.html` (sequence-C
+  order) — the repo's wave-3 *images* otherwise existed only on
+  the Thor; their embeddings were in-tree but pixels were not.
+- **Paths parameterised** in `ingest/ingest.py`: resolution is
+  `--fixtures-dir` → `$CONFLUENCE_FIXTURES_DIR` → the bundled
+  set (relative to the script, never `$HOME`); the full Thor
+  library is reachable only via explicit `CONFLUENCE_WAVE3_*`
+  overrides. The `~/image-studio/…` and `~/sitka-distill/…`
+  literals are gone, and the synthetic flat-gradient fallback
+  was deleted with them — missing fixtures now fail loudly
+  instead of silently testing nothing.
+- **Cold proof**: `slice1/core/prove_fixtures.py`, run from a
+  copied tree under an empty `$HOME` — baseline 16, cut 16/16,
+  object exactly {5,6}, drift silent, wave-3 C landings 16/16,
+  all at the **gate/diff layer**.
+- **What remains rack-dependent (unchanged, now disclosed in
+  `slice1/core/README.md`'s Acceptance header)**: the verdict
+  layer — I-JEPA embedding distances and the cascade's published
+  events need a live JEV rack; the cold proof stubs only the
+  rack call inside the real `Emitter` and makes no verdict claim
+  from its placeholder embeddings. The numbered Thor acceptance
+  (`acceptance.sh`) now runs against the bundled fixtures by
+  default when next executed on a Thor-class box.
+- Appendix item 9's first gap ("staged/wave3 acceptance needs
+  frame files that are not in the repo") is **retired** by this
+  resolution; the clean-box checklist otherwise stands.

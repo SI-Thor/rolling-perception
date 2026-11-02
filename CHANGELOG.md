@@ -6,6 +6,34 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — phase 2b: fixtures cold, fMP4 wired, findings filed, 2026-11-02
+
+- **Rehearsal blocker S2 cleared**: cold fixtures are bundled
+  (`slice1/core/fixtures/`, 3.35 MB, the project's own wave-3
+  frames recovered from the report HTML), ingest paths resolve
+  `--fixtures-dir` → `$CONFLUENCE_FIXTURES_DIR` → bundled set, and
+  the hardcoded Thor-home literals are gone (explicit env override
+  only). Cold proof under an empty `$HOME`: cut 16/16, object
+  exactly {5,6}, drift silent, all 11 C landings 16/16 — at the
+  gate/diff layer; the verdict layer remains rack-dependent and
+  `acceptance.sh` on a Thor-class box runs these fixtures by
+  default. The synthetic flat-gradient fallback was deleted, not
+  left as a trap.
+- **fMP4 is a production player mode** (slice2/player/): HEVC
+  sources now serve fragmented-MP4 HLS by remux — **0 encode-fps
+  charged**, `verify_fmp4.py` encodes the spike's 41-check
+  validation and passes end-to-end (EXTINF sum exactly 60.000 s,
+  1800/1800 packets); the "house is busy" refusal still binds
+  transcodes only. Measured fence: this box's V4L2 decoder rejects
+  VP9/AV1/MJPEG inputs (recorded in RESULTS.md), so the transcode
+  branch's reachable set is narrower than its probe suggests.
+- **Findings note received**: `docs/FINDINGS-CFC-JEPA-V2.md`
+  (filed by a sibling lane at Casey's direction) — the judge's
+  advisor seat now measured from two sides (7/12 on outcome pairs,
+  2/6 under fluency traps); calibration creep named as its own
+  phenomenon. The soak verdict (2026-11-03) now includes a
+  calibration-ageing analysis of the soak ledger against finding 2.
+
 ## [Unreleased] — phase 2: proof sweep, rehearsal, fMP4, 2026-11-01 (night)
 
 - **Proof sweep — four claims closed, two real bugs caught by the

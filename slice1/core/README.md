@@ -47,7 +47,36 @@ soak, max_frames, stop_file.
 Verdict latency is end-to-end: frame capture stamp (ingest) to
 ledger write, so it includes that frame's own embed time.
 
+## Fixtures (bundled 2026-11-02 — the rehearsal S2 blocker, cleared)
+
+The staged and wave-3 sources run from **fixtures bundled in
+this repo** (`fixtures/`: six wave-3 burst photos, six turntable
+frames, and the object patch — 3.35 MB, the project's own wave-3
+material, provenance in `fixtures/README.md`). Path resolution:
+`--fixtures-dir` → `$CONFLUENCE_FIXTURES_DIR` → the bundled set;
+a full local library is reachable only via the explicit
+`CONFLUENCE_WAVE3_*_GLOB` / `CONFLUENCE_WAVE3_B_FILE` overrides.
+No home-directory path is a default anymore (the ingest used to
+read `~/image-studio/outputs/…` and `~/sitka-distill/…` directly,
+which made this acceptance unreproducible from a clone).
+
+What reproduces **cold, anywhere**: `python3 prove_fixtures.py`
+runs the real ingest over the bundled fixtures with no rack and
+proves the gate/diff layer — baseline 16 tiles, cut frame 16/16
+nominated, object frame exactly {5,6}, drift frames silent,
+every wave-3 C landing 16/16 (verified 2026-11-02 from a copied
+tree under an empty `$HOME`). What still needs the Thor: the
+**verdict layer** — embedding distances and the cascade need a
+live JEV rack, so the numbered acceptance below remains a
+Thor run, now against these same fixtures by default.
+
 ## Acceptance (acceptance.sh, on the Thor — ALL PASS 2026-11-01)
+
+> Disclosure (per the graduation rehearsal): steps 2–4 run the
+> staged/wave-3 sources against the bundled fixtures (above) and
+> need the live JEV rack for embeds; the repo-only cold equivalent
+> of their gate layer is `prove_fixtures.py`, and the
+> fixture-driven Rust suite (`cargo test`) covers the cascade.
 
 1. `cargo test` — 3/3 (parity, ledger, service-via-ingest-interface).
 2. **Staged events** (real rack, real-photo composite scenes):

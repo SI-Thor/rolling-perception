@@ -7,14 +7,21 @@ library item into an HLS stream, deciding per request:
   REMUX     source codec is already browser-playable (probe says
             h264) -> GStreamer parse-only pipeline into TS HLS.
             Encode draw: 0 fps. Always served, never refused.
+  FMP4      source codec is hevc -> fmp4_pipeline.py: GStreamer
+            mp4mux remux to a fragmented MP4, split into init +
+            GOP-aligned media segments (tfhd default-base-is-moof
+            patched in place), HLS-fMP4 with EXT-X-MAP. Encode
+            draw: 0 fps (a remux, charged like REMUX). Always
+            served, never refused. Evidence: fmp4-spike/RESULTS.md
+            — spec-conformant by checklist + probe; the automated
+            form of that checklist is verify_fmp4.py.
   TRANSCODE anything else -> GStreamer V4L2 stack end to end
             (nvv4l2decoder -> nvvidconv -> nvv4l2h264enc) into
-            TS HLS. Target is H.264, not H.265: see README
-            "Codec decision" — the box has no fMP4/CMAF HLS sink,
-            and HEVC-in-TS is outside Apple's HLS spec, so the
-            measured 2.5-3.5x V4L2 H.265 advantage cannot yet be
-            spent on a stream household browsers can be promised
-            to play.
+            TS HLS. Target stays H.264: the transcode output is
+            produced live by the V4L2 stack as TS; HEVC-in-TS is
+            outside Apple's HLS spec, and no live fMP4 sink is
+            wired for the encode path (the FMP4 mode above covers
+            items whose HEVC encode already exists).
 
 Why GStreamer for both modes: this box's ffmpeg build has NO HLS
 muxer at all (measured: 'Unrecognized option hls_time'; muxers
@@ -49,7 +56,7 @@ Config (env):
   PLAYER_PHANTOM_UNITS  TEST HOOK: pretend N budget units are
                       already used (acceptance test c). Default 0.
 """
-import json, math, os, re, signal, subprocess, threading, time, uuid
+import json, math, os, re, signal, subprocess, sys, threading, time, uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -122,7 +129,9 @@ def library():
             if not p.is_file() or p.suffix.lower() not in VID_EXT:
                 continue
             pr = probe(p)
-            mode = "remux" if (pr and pr["codec"] == "h264") else "transcode"
+            codec = (pr or {}).get("codec")
+            mode = ("remux" if codec == "h264" else
+                    "fmp4" if codec == "hevc" else "transcode")
             items.append({"id": p.stem,
                           "title": p.stem.replace("-", " ").replace("_", " "),
                           "src": p.name, "probe": pr, "mode": mode,
@@ -184,6 +193,9 @@ def build_cmd(item, sdir):
            f"location={sdir}/seg%05d.ts", f"target-duration={SEG_DUR}",
            "playlist-length=0", "max-files=0"]
     demux = DEMUX.get(Path(item["src"]).suffix.lower(), "qtdemux")
+    if item["mode"] == "fmp4":
+        return [sys.executable, str(HERE / "fmp4_pipeline.py"),
+                str(src), str(sdir), demux]
     if item["mode"] == "remux":
         return (["gst-launch-1.0", "-e", "filesrc", f"location={src}", "!",
                  demux, "name=d", "d.video_0", "!", "queue", "!",
@@ -244,6 +256,10 @@ class Session:
         self._last_increase = time.time()
 
     def playlist_ready(self):
+        if self.mode == "fmp4":
+            return ((self.dir / "playlist.m3u8").exists()
+                    and (self.dir / "init.mp4").exists()
+                    and any(self.dir.glob("seg_*.m4s")))
         return (self.dir / "playlist.m3u8").exists() and any(self.dir.glob("seg*.ts"))
 
 
@@ -298,6 +314,25 @@ def supervise():
         with SES_LOCK:
             live = [s for s in SESSIONS.values() if s.status in ("starting", "running")]
         for s in live:
+            if s.mode == "fmp4":
+                # frames = samples recorded by build_hls.py; the
+                # pipeline is a ~0.1 s remux, so this is bookkeeping,
+                # not supervision (the stall watchdog is transcode-only).
+                sj = s.dir / "segments.json"
+                if sj.exists():
+                    try:
+                        s.frames = sum(g.get("samples", 0) for g in
+                                       json.loads(sj.read_text()).get("segments", []))
+                    except Exception:
+                        pass
+                if s.proc and s.proc.poll() is not None:
+                    if s.ended is None:
+                        s.ended = time.time()
+                    if s.proc.returncode == 0 and s.playlist_ready():
+                        finish(s, "ready")
+                    else:
+                        finish(s, "failed", reason=f"worker_exit_{s.proc.returncode}")
+                continue
             # count frames: stable segments once; newest segment repeatedly
             segs = sorted(s.dir.glob("seg*.ts"))
             total = sum(s._counted.values())
@@ -421,26 +456,36 @@ def play(item_id: str):
             return JSONResponse({"state": "failed", "reason": s.reason}, status_code=502)
         if s.playlist_ready() and s.status == "ready":
             break
-        if s.playlist_ready() and s.mode == "remux":
+        if s.playlist_ready() and s.mode in ("remux", "fmp4"):
             break
         time.sleep(0.4)
     pl = s.dir / "playlist.m3u8"
     if not pl.exists():
         return JSONResponse({"state": s.status, "error": "playlist not ready"}, status_code=503)
     text = pl.read_text(errors="replace")
-    text = "\n".join(f"/hls/{s.id}/{ln}" if ln.strip().endswith(".ts") else ln
-                     for ln in text.splitlines())
-    return PlainTextResponse(text, media_type="application/x-mpegURL")
+    out_lines = []
+    for ln in text.splitlines():
+        st = ln.strip()
+        if st.startswith("#EXT-X-MAP:") and 'URI="' in st:
+            ln = ln.replace('URI="', f'URI="/hls/{s.id}/', 1)
+        elif st.endswith(".ts") or st.endswith(".m4s"):
+            ln = f"/hls/{s.id}/{st}"
+        out_lines.append(ln)
+    return PlainTextResponse("\n".join(out_lines) + "\n",
+                             media_type="application/x-mpegURL")
 
 
 @app.get("/hls/{sid}/{name}")
 def hls(sid: str, name: str):
-    if not re.fullmatch(r"[0-9a-f]{8}", sid) or not re.fullmatch(r"(playlist\.m3u8|seg\d+\.ts)", name):
+    if not re.fullmatch(r"[0-9a-f]{8}", sid) or not re.fullmatch(
+            r"(playlist\.m3u8|seg\d+\.ts|init\.mp4|seg_\d+\.m4s)", name):
         return PlainTextResponse("not found", status_code=404)
     cand = (WORK / sid / name).resolve()
     if not str(cand).startswith(str(WORK.resolve())) or not cand.is_file():
         return PlainTextResponse("not found", status_code=404)
-    mt = "application/x-mpegURL" if name.endswith(".m3u8") else "video/MP2T"
+    mt = ("application/x-mpegURL" if name.endswith(".m3u8") else
+          "video/MP2T" if name.endswith(".ts") else
+          "video/mp4" if name == "init.mp4" else "video/iso.segment")
     return FileResponse(cand, media_type=mt)
 
 

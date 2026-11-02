@@ -12,10 +12,13 @@ per embedded tile) plus a frame_end control line per frame:
    "nominated":K,"gate_diff":G}
 
 Sources (identical interface — the service cannot tell them apart):
-  staged   synthetic staged-events sequence (cut / object / drift),
-           ground truth written to --truth-out. The acceptance rig.
-  wave3    the real wave-3 frame sequences from the Thor's own files
-           (A burst, B turntable, C interleaved cuts).
+  staged   staged-events sequence (cut / object / drift) composited
+           from the bundled fixture photos, ground truth written to
+           --truth-out. The acceptance rig.
+  wave3    the wave-3 frame sequences (A burst, B turntable,
+           C interleaved cuts). Frames resolve from the bundled
+           fixtures by default; see fixtures_dir() for the override
+           order (explicit --fixtures-dir / env, then bundled).
   shot     IP Webcam style: poll GET <url> for one JPEG per frame.
   mjpeg    IP Webcam style: MJPEG stream at <url> (/video), frames
            taken at the lens cadence, drop-to-newest.
@@ -24,12 +27,36 @@ Gate: frame 0 embeds every tile (baseline). Later frames embed a
 tile iff its mean-abs diff vs the previous frame exceeds --gate.
 This is the wave-3 CHANGED strategy, live.
 """
-import argparse, io, json, sys, time
+import argparse, glob, io, json, os, sys, time
 import numpy as np
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image
 
 TILES = 16
+
+
+def fixtures_dir():
+    """Where the bundled cold fixtures live, in resolution order:
+
+    1. `--fixtures-dir DIR` (explicit config, set in main()),
+    2. `$CONFLUENCE_FIXTURES_DIR`,
+    3. the fixtures bundled in this repo at `slice1/core/fixtures/`
+       (resolved relative to this file, never the CWD or $HOME).
+
+    A stranger running from a fresh clone always lands on (3): no
+    path in anyone's home directory is a default anywhere in this
+    file. A full local frame library (e.g. the Thor's complete
+    wave-3 material) is reachable only through the explicit
+    CONFLUENCE_WAVE3_A_GLOB / CONFLUENCE_WAVE3_B_GLOB /
+    CONFLUENCE_WAVE3_B_FILE overrides in wave3_frames().
+    """
+    if getattr(fixtures_dir, "override", None):
+        return fixtures_dir.override
+    env = os.environ.get("CONFLUENCE_FIXTURES_DIR")
+    if env:
+        return env
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        os.pardir, "fixtures")
 
 
 def now_us():
@@ -93,33 +120,10 @@ class Emitter:
         return len(nominated)
 
 
-# ---------------- staged synthetic sequence ----------------
+# ---------------- staged sequence (bundled fixture photos) ----------------
 
-def scene1(rng):
-    img = np.zeros((512, 512, 3), dtype=np.float32)
-    for y in range(512):
-        img[y, :, 0] = 30 + 60 * y / 512      # red gradient
-        img[y, :, 1] = 40 + 30 * y / 512
-        img[y, :, 2] = 90
-    pil = Image.fromarray(img.astype(np.uint8))
-    d = ImageDraw.Draw(pil)
-    d.rectangle([40, 300, 220, 470], fill=(25, 35, 70))       # dark block
-    d.ellipse([320, 60, 470, 210], fill=(120, 120, 110))      # grey disc
-    return np.asarray(pil, dtype=np.float32)
-
-
-def scene2(rng):
-    img = np.zeros((512, 512, 3), dtype=np.float32)
-    for x in range(512):
-        img[:, x, 0] = 150
-        img[:, x, 1] = 120 + 80 * x / 512     # green gradient
-        img[:, x, 2] = 40 + 40 * x / 512
-    pil = Image.fromarray(img.astype(np.uint8))
-    d = ImageDraw.Draw(pil)
-    for i in range(4):
-        d.rectangle([30 + i * 120, 330, 110 + i * 120, 440], fill=(200, 140, 40))
-    d.ellipse([60, 40, 190, 170], fill=(60, 60, 160))         # blue disc
-    return np.asarray(pil, dtype=np.float32)
+def _load_png(path):
+    return np.asarray(Image.open(path).convert("RGB"), dtype=np.float32)
 
 
 def staged_frames():
@@ -127,24 +131,23 @@ def staged_frames():
     7 object added (a real-photo patch over tiles 5,6), 10-17 gradual
     drift (slow brightening: per-frame diff must stay under the gate).
 
-    The scenes are composited from REAL photos (the wave-3 burst and
-    turntable frames), not synthetic colour fields: the first version
-    of this rig used flat gradient scenes and I-JEPA embedded the two
-    "different" scenes nearly identically (both are flat fields with
-    simple shapes to a model trained on natural images) — the cut
-    scored under threshold and published nothing. A rig whose scenes
-    the perception model cannot tell apart tests nothing. Falls back
-    to the synthetic scenes if the photo files are absent."""
+    The scenes are composited from REAL photos — the bundled wave-3
+    fixture frames (fixtures/wave3/A-00.png, B-00.png) and the
+    fixture patch (fixtures/patch.png, a crop of A-03 at exactly the
+    placement rectangle below) — not synthetic colour fields: the
+    first version of this rig used flat gradient scenes and I-JEPA
+    embedded the two "different" scenes nearly identically (both are
+    flat fields with simple shapes to a model trained on natural
+    images) — the cut scored under threshold and published nothing.
+    A rig whose scenes the perception model cannot tell apart tests
+    nothing. There is deliberately NO synthetic fallback: if the
+    fixtures are missing the checkout is broken, and failing loudly
+    beats silently testing nothing."""
     rng = np.random.default_rng(7)
-    try:
-        A = wave3_frames("A")
-        B = wave3_frames("B")
-        s1, s2 = A[0], B[0]
-        patch = A[3][128:256, 128:384].copy()  # real photo content
-    except Exception:
-        s1, s2 = scene1(rng), scene2(rng)
-        patch = np.zeros((128, 256, 3), dtype=np.float32)
-        patch[:] = (232.0, 42.0, 30.0)
+    fx = fixtures_dir()
+    s1 = _load_png(os.path.join(fx, "wave3", "A-00.png"))
+    s2 = _load_png(os.path.join(fx, "wave3", "B-00.png"))
+    patch = _load_png(os.path.join(fx, "patch.png"))  # 128x256, real photo
 
     def noisy(base):
         return np.clip(base + rng.normal(0, 1.0, base.shape), 0, 255)
@@ -168,21 +171,49 @@ def staged_frames():
     return frames, truth
 
 
-# ---------------- wave-3 real sequences ----------------
+# ---------------- wave-3 sequences (bundled fixtures by default) ----------------
+
+def _fixture_frames(name):
+    paths = sorted(glob.glob(os.path.join(
+        fixtures_dir(), "wave3", name + "-*.png")))
+    if not paths:
+        raise FileNotFoundError(
+            f"no bundled wave-3 fixtures matching {name}-*.png under "
+            f"{fixtures_dir()} — pass --fixtures-dir or set "
+            f"CONFLUENCE_FIXTURES_DIR (see fixtures/README.md)")
+    return [_load_png(p) for p in paths]
+
 
 def wave3_frames(seq):
-    import glob, os
-    a_paths = sorted(glob.glob(os.path.expanduser(
-        "~/image-studio/outputs/burst_1792818193_b512cd_f*.png")))
-    A = [np.asarray(Image.open(p).convert("RGB"), dtype=np.float32) for p in a_paths]
-    webp = Image.open(os.path.expanduser("~/sitka-distill/showcase/dock-turntable.webp"))
-    B = []
-    for i in range(12):
-        webp.seek(i)
-        fr = webp.convert("RGB")
-        w, h = fr.size
-        fr = fr.crop((0, (h - w) // 2, w, (h - w) // 2 + w)).resize((512, 512))
-        B.append(np.asarray(fr, dtype=np.float32))
+    """A = burst photos, B = turntable frames, C = interleaved cuts.
+
+    Default material is the bundled fixture set (6 A + 6 B — enough
+    for the full C sequence, which interleaves the first 6 of each).
+    A larger local library is used ONLY when explicitly configured:
+    CONFLUENCE_WAVE3_A_GLOB / CONFLUENCE_WAVE3_B_GLOB (globs of
+    image files) or CONFLUENCE_WAVE3_B_FILE (one multi-frame image,
+    e.g. the original animated webp — frames are centre-cropped to
+    square and resized to 512x512, as the original rig did)."""
+    a_glob = os.environ.get("CONFLUENCE_WAVE3_A_GLOB")
+    b_glob = os.environ.get("CONFLUENCE_WAVE3_B_GLOB")
+    b_file = os.environ.get("CONFLUENCE_WAVE3_B_FILE")
+    if a_glob:
+        A = [_load_png(p) for p in sorted(glob.glob(a_glob))]
+    else:
+        A = _fixture_frames("A")
+    if b_glob:
+        B = [_load_png(p) for p in sorted(glob.glob(b_glob))]
+    elif b_file:
+        img = Image.open(b_file)
+        B = []
+        for i in range(getattr(img, "n_frames", 1)):
+            img.seek(i)
+            fr = img.convert("RGB")
+            w, h = fr.size
+            fr = fr.crop((0, (h - w) // 2, w, (h - w) // 2 + w)).resize((512, 512))
+            B.append(np.asarray(fr, dtype=np.float32))
+    else:
+        B = _fixture_frames("B")
     if seq == "A":
         return A
     if seq == "B":
@@ -242,7 +273,13 @@ def main():
     ap.add_argument("--rack", default="http://127.0.0.1:8077")
     ap.add_argument("--max-frames", type=int, default=0)
     ap.add_argument("--truth-out", default="")
+    ap.add_argument("--fixtures-dir", default="",
+                    help="fixture directory override (else "
+                         "$CONFLUENCE_FIXTURES_DIR, else the fixtures "
+                         "bundled in this repo)")
     args = ap.parse_args()
+    if args.fixtures_dir:
+        fixtures_dir.override = args.fixtures_dir
 
     em = Emitter(args.rack, args.gate)
     if args.source == "staged":

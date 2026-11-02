@@ -7,8 +7,11 @@ bench's budget, with the bench's zombie lesson implemented as a
 frame-counter watchdog.
 
 Files: `player.py` (backend), `index.html` (page), `acceptance.sh`
-(the four-part acceptance, run on the Thor), `RESULTS.md` (evidence
-from the 2026-11-01 runs).
+(the acceptance, run on the Thor), `RESULTS.md` (evidence from the
+2026-11-01 runs), `fmp4_pipeline.py` + `build_hls.py` +
+`fmp4_split.py` (the HEVC→fMP4 production path, copied from the
+spike in `fmp4-spike/`), `verify_fmp4.py` (the spike's validation
+checklist as code).
 
 ## Run it (on the Thor)
 
@@ -30,6 +33,15 @@ library item, copied from `~/cartography-verify/jev-quilt/assets/`),
 - **h264 source → REMUX.** GStreamer parse-only pipeline
   (`qtdemux → h264parse → hlssink2`) into TS HLS. Encode draw
   **0 fps**; a 5.9 s clip remuxes in ~50 ms. Always served.
+- **hevc source → FMP4.** `fmp4_pipeline.py`: GStreamer `mp4mux`
+  remux to a fragmented MP4, split into an init segment +
+  GOP-aligned media segments (tfhd `default-base-is-moof` patched
+  in place), served as HLS-fMP4 (`EXT-X-MAP`, `seg_*.m4s`). Encode
+  draw **0 fps** — a remux, charged exactly like REMUX, never
+  refused. Wired 2026-11-02 from the spike in `fmp4-spike/`,
+  whose verdict stands: spec-conformant by checklist + probe
+  (`verify_fmp4.py` is that checklist as code); no Apple-client
+  playback is claimed.
 - **anything else → TRANSCODE.** GStreamer V4L2 stack end to end
   (`nvv4l2decoder → nvvidconv → nvv4l2h264enc`, 6 Mb/s, GOP = one
   segment) into TS HLS.
@@ -53,10 +65,17 @@ pattern — no hls.js) can be promised to play:
   only `hlssink`/`hlssink2`, both TS-only), and Apple's HLS spec
   requires HEVC in fMP4 — HEVC-in-TS is outside the spec for the
   one browser family with native HLS. Chrome has no native HLS.
-- Verdict: spend the more expensive H.264 encode today; H.265
-  becomes the follow-up the day an fMP4 HLS path is verified
-  against a real client. The decision is recorded here so it is
-  re-opened by evidence, not by habit.
+- Verdict (as written 2026-11-01): spend the more expensive H.264
+  encode today; H.265 becomes the follow-up the day an fMP4 HLS
+  path is verified against a real client. The decision is recorded
+  here so it is re-opened by evidence, not by habit.
+- **Update (2026-11-02):** the fMP4 path now exists and is wired
+  (FMP4 mode above; `fmp4-spike/RESULTS.md` for the evidence) —
+  for items whose HEVC encode already exists, no transcode is
+  spent at all. The H.264 verdict above still governs the live
+  TRANSCODE output, which is produced as TS by the V4L2 stack;
+  the original reasoning is kept verbatim because it still
+  describes that half correctly.
 
 ## Budget (NVENC-BENCH.md §6, Panel-2 Q2 shed order)
 
