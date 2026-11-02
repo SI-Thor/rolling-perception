@@ -7,6 +7,6 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 
-[profile.release]
-opt-level = 3
-debug = false
+# [profile.release] removed in polish: profiles in a non-root workspace
+# member are IGNORED (cargo warns) and opt-level 3 is already the
+# release default. Set profiles in the workspace-root Cargo.toml.

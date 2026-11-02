@@ -11,4 +11,21 @@ Not implemented, deliberately: CascadeJIT/CudaClaw/NVRTC/CUPTI and
 SkaldAudio DMA — those need a CUDA/Thor lane and the email's versions
 were mocks. See `src/lib.rs` for the claim-by-claim table.
 
-Run: `cargo test`
+## Run it
+
+From **this crate's directory** (`crates/rolling-substrate-core/`):
+
+```sh
+cargo test   # 23 tests, this crate only
+             # (from the repository root, cargo test runs all 29 workspace tests)
+```
+
+On the Thor over SSH, first:
+`export PATH=$HOME/.cargo/bin:/usr/local/cuda/bin:$PATH`
+(cargo is not on the default PATH there).
+
+There is no binary in this crate — it is a library. The tests are the
+demonstration: ring claim/publish across laps, multi-producer claim
+uniqueness, Laplacian energy strictly decreasing on inconsistent
+input, the PIR wrap false-positive shown as a counterexample, and
+gating skip counts checked exactly.

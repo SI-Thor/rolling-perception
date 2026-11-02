@@ -1,0 +1,10 @@
+[package]
+name = "rolling-pipeline"
+version = "0.1.0"
+edition = "2021"
+description = "Integrated end-to-end rolling-perception cascade: perceive -> decide -> direct -> refine -> publish wired through substrate rings, with lineage, sheaf refinement, deadband/hysteresis direction, counted ops, and a file-replay trace producer."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+rolling-perception = { path = "../rolling-perception" }
+rolling-substrate-core = { path = "../rolling-substrate-core" }

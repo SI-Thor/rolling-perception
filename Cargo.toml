@@ -1,3 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/rolling-perception", "crates/rolling-substrate-core"]
+members = [
+    "crates/rolling-perception",
+    "crates/rolling-substrate-core",
+    "crates/rolling-pipeline",
+    "crates/rolling-adaptive",
+    "crates/cuda-thor",
+]

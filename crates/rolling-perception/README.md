@@ -70,12 +70,34 @@ both passes.
 
 ## Run it
 
+Run these **from this crate's directory** (`crates/rolling-perception/`),
+or prefix with `-p rolling-perception` from the repository root.
+On the Thor over SSH, first:
+`export PATH=$HOME/.cargo/bin:/usr/local/cuda/bin:$PATH`
+(cargo is not on the default PATH there).
+
 ```sh
-cargo test
+cargo test                                              # 6 tests, this crate only
+                                                        # (from the repo root, cargo test runs all 29)
 cargo run --release                                     # 120 cycles, 400 µs stagger
 cargo run --release -- --cycles 50 --stagger-us 0       # no sensor stagger
 cargo run --release -- --cycles 50 --stagger-us 2000    # sensor-dominated regime
 ```
+
+Expected output shape (numbers vary by machine; the invariants don't):
+
+```
+batched  ttfo=... us  total=... ms  outputs=120  ...  checksum=345101.1999
+rolling  ttfo=... us  total=... ms  outputs=600  ...  checksum=345101.1999
+---
+ttfo ratio (batched / rolling): <about 3x-16x>
+outputs ratio (rolling / batched): 5.0x
+checksum delta |batched - rolling|: 0.000000
+```
+
+If the checksum is not `345101.1999`, or the delta is not exactly
+`0.000000`, something is wrong — the two schedulers must do identical
+work (that identity is also asserted by a test).
 
 ## What would falsify the claim
 

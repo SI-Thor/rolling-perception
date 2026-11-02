@@ -1,0 +1,21 @@
+SOAK start duration=600s pid-visible-name=spike2_soak
+SOAK t=30s requests=298 ack p50=1139.4 us p95=2097.7 us
+SOAK t=60s requests=596 ack p50=164.4 us p95=2060.1 us
+SOAK t=90s requests=895 ack p50=7.7 us p95=2047.3 us
+SOAK t=120s requests=1191 ack p50=124.0 us p95=2063.2 us
+SOAK t=150s requests=1491 ack p50=7.2 us p95=2044.3 us
+SOAK t=180s requests=1791 ack p50=6.6 us p95=2032.4 us
+SOAK t=210s requests=2091 ack p50=6.2 us p95=2020.0 us
+SOAK t=240s requests=2391 ack p50=6.0 us p95=2009.9 us
+SOAK t=270s requests=2691 ack p50=6.0 us p95=2001.6 us
+SOAK t=300s requests=2991 ack p50=5.9 us p95=1991.2 us
+SOAK t=331s requests=3291 ack p50=5.8 us p95=1980.6 us
+SOAK t=361s requests=3591 ack p50=5.7 us p95=1967.8 us
+SOAK t=391s requests=3891 ack p50=5.7 us p95=1955.5 us
+SOAK t=421s requests=4191 ack p50=5.7 us p95=1949.4 us
+SOAK t=451s requests=4491 ack p50=5.6 us p95=1941.1 us
+SOAK t=481s requests=4791 ack p50=5.6 us p95=1932.0 us
+SOAK t=511s requests=5091 ack p50=5.5 us p95=1911.4 us
+SOAK t=541s requests=5391 ack p50=5.5 us p95=1888.5 us
+SOAK t=571s requests=5691 ack p50=5.4 us p95=1863.1 us
+SOAK done wall=600.1s requests=5981 ack mean=177.5 us p50=5.4 us p95=1829.6 us p99=2070.0 us max=10497.9 us buf[0]=5981.0 expected=5981.0 MATCH STOPPED-CLEAN

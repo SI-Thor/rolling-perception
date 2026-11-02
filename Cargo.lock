@@ -3,8 +3,24 @@
 version = 4
 
 [[package]]
+name = "cuda-thor"
+version = "0.2.0-spike"
+
+[[package]]
+name = "rolling-adaptive"
+version = "0.1.0"
+
+[[package]]
 name = "rolling-perception"
 version = "0.1.0"
+
+[[package]]
+name = "rolling-pipeline"
+version = "0.1.0"
+dependencies = [
+ "rolling-perception",
+ "rolling-substrate-core",
+]
 
 [[package]]
 name = "rolling-substrate-core"

@@ -1,0 +1,74 @@
+FINDINGS HEADER (written at capture time; raw capture follows)
+- Spike 1 PASS: NVRTC-from-Rust compile of compute_110 = ~24 ms, module load ~0.2 ms, GPU output BIT-EXACT vs CPU reference (max_err 0.0) on this kernel/input.
+- Controls: compute_100 PTX loads+runs with max_err 0.0 (PTX forward-compat — sm_100 is a wrong target choice, not fatal, on the PTX path); native sm_100 CUBIN load = error 209 'no kernel image is available for execution on the device' (the hard failure lives on the binary path).
+- Spike 3 PASS: 1000/1000 epochs verified (max_err 1.2e-7), 1000 retirements, event-before-unload enforced; mean CUBIN module load 2.3 ms; NVRTC sm_110 CUBIN compile ~10-13 ms per variant from Rust (exp2's C++ PTX numbers were 30-54 ms).
+- FFI trap found & fixed (in gpu.rs comments): cuda.h #defines cuMemAlloc etc. to _v2 symbols; the legacy plain symbols exist but return 201 INVALID_CONTEXT under a modern context. C worked, Rust didn't, a gcc shim inside the Rust process worked — that bisect isolated it.
+- Leak-gate near-miss: cuMemGetInfo on this shared unified-memory box is a very noisy instrument — in a quiet window, consecutive in-process runs (100/500/1000/100 swaps) swung +74.7/+6.4/-139.7/-10.1 MB (net +24 MB across 2,700 swaps, no per-swap slope); in THIS capture the box's other tenants were active and the global free pool swung by GIGABYTES (bin spike-3 delta +2.44 GB; diag section net -1.4 GB of external movement). A 2-4 KB module cannot cause GB swings; the original -16 MiB gate was unmeasurable either way. The shipped gate is therefore structural (loads==unloads==1000, every epoch verified) + a -384 MiB bound set by arithmetic in the test. In this capture the measured test run (after a 200-swap warm-up at -7.5 MB) came in at -63.9 MB — inside the bound, with correctness exact.
+
+cuda-thor v0.2 spikes 1+3 — captured on the AGX Thor (thor), 2026-11-01T15:06:00-09:00
+box: sm_110 / CUDA 13.2 / driver 595.78 / rustc 1.99.1 aarch64
+
+=== cargo test --release --features cuda-thor -- --ignored --nocapture ===
+    Finished `release` profile [optimized] target(s) in 0.00s
+     Running unittests src/lib.rs (target/release/deps/cuda_thor-dc7d9ccd58c920f5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/release/deps/spikes-5c8f7d52afed0ac6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/spikes.rs (target/release/deps/spikes-87e0d7f922b5742a)
+
+running 2 tests
+sm_100 CUBIN load control: error 209 (no kernel image is available for execution on the device)
+compute_100 PTX control: compile=compiled OK (1403 B PTX) run=loaded+ran OK, max_err vs reference = 0.000e0 (PTX is forward-compatible: the driver JITs it for sm_110; sm_100 is a wrong *target choice*, not a fatal one, on the PTX path)
+test spike1_nvrtc_compute110_matches_cpu_reference ... ok
+spike3 measured run: delta -63877120 B over 1000 swaps (warm-up delta -7503872 B over 200)
+test spike3_thousand_swaps_epoch_retirement_no_leak ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.26s
+
+   Doc-tests cuda_thor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+=== cargo run --release --features cuda-thor --bin spikes ===
+== Spike 1: NVRTC correctness (compute_110) ==
+nvrtc version: 13.2
+compile -arch=compute_110: 20.1 ms, PTX 1403 B
+cuModuleLoadData (PTX): 0.23 ms
+max_err vs CPU reference: 0.000e0  within tol (0.00001): true
+CONTROL compute_100 PTX compile: compiled OK (1403 B PTX)
+CONTROL compute_100 PTX load+run: loaded+ran OK, max_err vs reference = 0.000e0 (PTX is forward-compatible: the driver JITs it for sm_110; sm_100 is a wrong *target choice*, not a fatal one, on the PTX path)
+CONTROL sm_100 CUBIN compile: compiled OK (5664 B CUBIN)
+CONTROL sm_100 CUBIN load: error 209 (no kernel image is available for execution on the device)
+
+== Spike 3: 1,000 module swaps with epoch retirement ==
+swaps: 1000  launches/epoch: 4
+epochs verified: 1000  max_err: 1.192e-7  all within tol: true
+compile (once per variant, sm_110 CUBIN): A 13.6 ms, B 10.5 ms
+mean module load: 2.304 ms
+retirements: 1000 (event already complete at retirement check: 999)
+cuMemGetInfo free: before 9891000320 B, after 12330934272 B, delta +2439933952 B (+2326.90 MiB)
+wall: 4.9 s
+spikes exit=0
+
+=== diag: repeated spike3 in one process (leak-slope probe) ===
+spike3( 100) verified=100 ok=true max_err=1.2e-7 retire=100 free_before=12094349312 free_after=11752091648 delta=-342257664 B (-3342.4 KiB/swap) wall=0.6s
+spike3( 500) verified=500 ok=true max_err=1.2e-7 retire=500 free_before=11748458496 free_after=11598073856 delta=-150384640 B (-293.7 KiB/swap) wall=2.5s
+spike3(1000) verified=1000 ok=true max_err=1.2e-7 retire=1000 free_before=11531505664 free_after=10673217536 delta=-858288128 B (-838.2 KiB/swap) wall=4.9s
+spike3( 100) verified=100 ok=true max_err=1.2e-7 retire=100 free_before=10675073024 free_after=10644148224 delta=-30924800 B (-302.0 KiB/swap) wall=0.7s
+
+=== cargo test (feature off, CPU parts, on Thor) ===
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

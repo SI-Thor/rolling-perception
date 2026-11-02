@@ -1,0 +1,8 @@
+[package]
+name = "rolling-adaptive"
+version = "0.1.0"
+edition = "2021"
+description = "Lens-calibrated adaptive staggering for rolling perception: per-lane LensFile (period/jitter/phase-error self-model) vs fixed stagger, on identical jittered+drifting traces, measured. Dependency-free (std only)."
+license = "MIT OR Apache-2.0"
+
+[dependencies]

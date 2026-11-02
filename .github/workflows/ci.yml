@@ -1,0 +1,65 @@
+name: CI
+
+# Runs the full workspace test suite on both architectures the project
+# claims: x86_64 (development machines) and aarch64 (the AGX Thor is
+# aarch64; GitHub's arm runners are the closest public proxy — they do
+# NOT replace the on-Thor verification in docs/THOR-VERIFICATION.md).
+#
+# Status: prepared in wave-2 polish, NOT yet pushed/enabled.
+# Casey decides when this lands in the repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo test (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            # GitHub-hosted Arm64 Linux runner (public repos / enabled orgs).
+            # If this label is unavailable to the org, switch to
+            # ubuntu-24.04-arm or a self-hosted Thor runner — do NOT
+            # silently drop the aarch64 leg.
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Show toolchain + host arch
+        run: |
+          uname -m
+          rustc --version
+          cargo --version
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings denied)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test (debug)
+        run: cargo test --workspace
+
+      - name: Test (release) + bench smoke run
+        run: |
+          cargo test --workspace --release
+          cargo run --release -p rolling-perception -- --cycles 20 --stagger-us 400
