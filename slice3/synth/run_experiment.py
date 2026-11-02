@@ -43,11 +43,14 @@ def mean(xs):
 
 # ---------------------------------------------------------------- replay
 
-def replay(world, reads):
+def replay(world, reads, snap_k=None):
     """Feed arrivals (non-dropped reads) to lens+engines; snapshot
-    the full state after every arrival."""
+    the full state after every arrival. snap_k=None is the v1
+    engine; a float arms the snap rule at that band multiple."""
     lens = Lens(nominal_period=0.5)
     engines = {n: EngineObject(n) for n in world.NAMES}
+    for e in engines.values():
+        e.snap_k = snap_k
     snaps = []  # (t_arrival, lens_tuple, {name: engine snapshot}, {name: raw z})
     for rd in reads:
         if rd.dropped:
@@ -339,5 +342,249 @@ def print_tables(r):
               f"{v['engine_changedset_err']:.3f} (n={v['frames_evaluated']})")
 
 
+# ---------------------------------------------------------------- snap sweep
+
+SNAP_KS = (2.0, 3.0, 5.0)
+# An on-rhythm correction age is ~0.5 +- 0.1 s in this stream; a
+# post-drop one is ~1.0 +- 0.15 s. 0.8 s splits the two clusters and
+# is used only to AUDIT where fired snaps landed (the guard itself
+# is the lens stale_threshold, judged inside EngineObject.correct).
+GAP_AGE_SPLIT = 0.8
+
+
+def measure_variant(world, snaps):
+    """The v1 query loop, trimmed to what the snap comparison
+    grades: per-(lag, object) engine/sampler errors + serve
+    exceedance, manoeuvre bins, per-query reverser lag-1 series,
+    and reverser velocity re-convergence."""
+    arrivals = [s[0] for s in snaps]
+    acc = {(L, n): {"sampler": [], "engine": []}
+           for L in LAGS for n in world.NAMES}
+    exceed_serve = {(L, n): [] for L in LAGS for n in world.NAMES}
+    events = {"speeder": World.ACCEL_T, "reverser": World.REV_T}
+    bins = [(-5, 0), (0, 1), (1, 2), (2, 4), (4, 8), (8, 16)]
+    man = {n: {b: {"engine1": [], "sampler1": [], "engine2": []}
+               for b in bins} for n in events}
+    baseline_err = {n: [] for n in world.NAMES}
+    rev_series = []          # (t_q, engine lag-1 err, sampler lag-1 err)
+
+    t_q = QUERY_T0
+    while t_q <= QUERY_T1 + 1e-9:
+        for L in LAGS:
+            cutoff = t_q - L
+            i = bisect.bisect_right(arrivals, cutoff) - 1
+            if i < 0:
+                continue
+            t_arr, (per, var), esnap, z = snaps[i]
+            lens_s = lens_from(per, var)
+            for n in world.NAMES:
+                tx, ty = world.truth(n, t_q)
+                sx, sy = z[n]
+                serr = math.hypot(tx - sx, ty - sy)
+                acc[(L, n)]["sampler"].append(serr)
+                sv = esnap[n].serve(t_q, lens_s)
+                e = math.hypot(tx - sv.x, ty - sv.y)
+                acc[(L, n)]["engine"].append(e)
+                if sv.tolerance > 0:
+                    exceed_serve[(L, n)].append(
+                        1 if e > sv.tolerance else 0)
+                if L == 1.0 and 15.0 <= t_q <= 28.0:
+                    baseline_err[n].append(e)
+                if L == 1.0 and n == "reverser":
+                    rev_series.append((t_q, e, serr))
+                if n in events and L in (1.0, 2.0):
+                    rel = t_q - events[n]
+                    for b in bins:
+                        if b[0] <= rel < b[1]:
+                            if L == 1.0:
+                                man[n][b]["engine1"].append(e)
+                                man[n][b]["sampler1"].append(serr)
+                            else:
+                                man[n][b]["engine2"].append(e)
+        t_q += QUERY_DT
+
+    classes = {"all": list(world.NAMES),
+               "controls": list(world.CONTROLS),
+               "speeder": ["speeder"],
+               "reverser": ["reverser"]}
+    lag_table = []
+    for L in LAGS:
+        row = {"lag_s": L}
+        for cname, members in classes.items():
+            ee = [e for n in members for e in acc[(L, n)]["engine"]]
+            ex = [x for n in members for x in exceed_serve[(L, n)]]
+            row[cname] = {
+                "engine_mean": mean(ee), "engine_p95": p95(ee),
+                "exceedance": (sum(ex) / len(ex)) if ex else None,
+                "n": len(ee)}
+        lag_table.append(row)
+
+    man_out = {}
+    for n, te in events.items():
+        base = statistics.median(baseline_err[n])
+        rows, recovery = [], None
+        for b in bins:
+            d = man[n][b]
+            row = {"rel_window_s": list(b),
+                   "engine_lag1_mean":
+                       mean(d["engine1"]) if d["engine1"] else None,
+                   "sampler_lag1_mean":
+                       mean(d["sampler1"]) if d["sampler1"] else None,
+                   "engine_lag2_mean":
+                       mean(d["engine2"]) if d["engine2"] else None}
+            rows.append(row)
+            if b[0] >= 0 and recovery is None and d["engine1"] \
+                    and mean(d["engine1"]) < 1.5 * base:
+                recovery = list(b)
+        man_out[n] = {"event_t": te, "baseline_lag1_median": base,
+                      "recovery_window": recovery, "rows": rows}
+
+    # fine recovery metric: first post-flip query time whose next
+    # 2 s AND following 2 s of lag-1 errors both average below
+    # 1.5x the variant's own pre-flip baseline median.
+    base_rev = man_out["reverser"]["baseline_lag1_median"]
+    thr = 1.5 * base_rev
+    post = [(t, e) for (t, e, _s) in rev_series if t >= World.REV_T]
+    ttb = None
+    for idx, (t0, _e) in enumerate(post):
+        w1 = [e for (t, e) in post if t0 <= t < t0 + 2.0]
+        w2 = [e for (t, e) in post if t0 + 2.0 <= t < t0 + 4.0]
+        if w1 and w2 and mean(w1) < thr and mean(w2) < thr:
+            ttb = t0 - World.REV_T
+            break
+
+    rev_conv = None
+    for t_arr, _lt, esnap, _z in snaps:
+        if t_arr > World.REV_T and abs(esnap["reverser"].vy - (-3.0)) < 0.3:
+            rev_conv = {"t": t_arr,
+                        "corrections_after_event":
+                            sum(1 for s in snaps
+                                if World.REV_T < s[0] <= t_arr)}
+            break
+
+    return {"lag_table": lag_table, "manoeuvre": man_out,
+            "time_to_baseline_s": ttb,
+            "reverser_velocity_reconverged": rev_conv}
+
+
+def run_snap():
+    """Identical streams to run() (same seed, same consumption
+    order); only the engine's correction policy varies."""
+    rng = random.Random(SEED)
+    world = World()
+    sensor = Sensor(rng)
+    reads = sensor.stream(world, World.T_END)
+    with open(os.path.join(HERE, "results.json")) as f:
+        v1 = json.load(f)
+
+    variants = {}
+    for k in (None,) + SNAP_KS:
+        snaps, engines_final, _lens = replay(world, reads, snap_k=k)
+        m = measure_variant(world, snaps)
+        m["correction_exceedance_trailing100"] = {
+            n: engines_final[n].exceedance_rate(100) for n in world.NAMES}
+        m["snap_stats"] = {}
+        for n in world.NAMES:
+            ev = engines_final[n].snap_events
+            m["snap_stats"][n] = {
+                "n_snaps": engines_final[n].n_snaps,
+                "n_suppressed": engines_final[n].n_snap_suppressed,
+                "snaps_on_rhythm":
+                    sum(1 for e in ev if e[1] <= GAP_AGE_SPLIT),
+                "snaps_post_gap_age":
+                    sum(1 for e in ev if e[1] > GAP_AGE_SPLIT),
+                "events": [[round(x, 3) for x in e] for e in ev]}
+        variants["off" if k is None else f"k{k:g}"] = m
+
+    # comparability audit: the snap-off variant must reproduce the
+    # v1 lag table's engine means, or the sweep compares nothing.
+    audit = []
+    for row_v, row_1 in zip(variants["off"]["lag_table"], v1["lag_table"]):
+        for cname in ("all", "controls", "speeder", "reverser"):
+            audit.append(abs(row_v[cname]["engine_mean"]
+                             - row_1[cname]["engine_mean"]) < 1e-9)
+    result = {"seed": SEED, "snap_ks": list(SNAP_KS),
+              "gap_age_split_s": GAP_AGE_SPLIT,
+              "comparability_audit_passed": all(audit),
+              "variants": variants}
+    with open(os.path.join(HERE, "snap_results.json"), "w") as f:
+        json.dump(result, f, indent=1)
+    print_snap_tables(result, v1)
+    return result
+
+
+def print_snap_tables(r, v1):
+    print(f"comparability audit (snap-off == v1 engine means): "
+          f"{r['comparability_audit_passed']}")
+    vs = r["variants"]
+    print("\nREVERSER RECOVERY (the headline)")
+    print(f"{'variant':>8} {'base':>6} {'[0,1)':>7} {'[1,2)':>7} "
+          f"{'[2,4)':>7} {'[4,8)':>7} {'rec win':>9} {'t->base':>8} "
+          f"{'vel conv':>9}")
+    samp_rows = v1["manoeuvre"]["reverser"]["rows"]
+    print(f"{'sampler':>8} {v1['manoeuvre']['reverser']['baseline_lag1_median']:>6.3f} "
+          + " ".join(f"{row['sampler_lag1_mean']:>7.3f}"
+                     for row in samp_rows[1:5])
+          + f" {'--':>9} {'never':>8} {'--':>9}")
+    for name, m in vs.items():
+        mt = m["manoeuvre"]["reverser"]
+        rows = mt["rows"]
+        vc = m["reverser_velocity_reconverged"]
+        print(f"{name:>8} {mt['baseline_lag1_median']:>6.3f} "
+              + " ".join(f"{row['engine_lag1_mean']:>7.3f}"
+                         for row in rows[1:5])
+              + f" {str(mt['recovery_window']):>9} "
+              + (f"{m['time_to_baseline_s']:>8.2f}"
+                 if m["time_to_baseline_s"] is not None else f"{'never':>8}")
+              + (f"{vc['corrections_after_event']:>7}c" if vc else f"{'--':>9}"))
+    print("\nSNAP ACCOUNTING (fired / guard-suppressed; fired split "
+          "by correction age)")
+    for name, m in vs.items():
+        if name == "off":
+            continue
+        parts = []
+        for n in World.NAMES:
+            s = m["snap_stats"][n]
+            parts.append(f"{n}: {s['n_snaps']} fired "
+                         f"({s['snaps_on_rhythm']} rhythm / "
+                         f"{s['snaps_post_gap_age']} post-gap), "
+                         f"{s['n_suppressed']} suppressed")
+        print(f" {name}: " + "; ".join(parts))
+    print("\nCONTROL COST (engine mean error, snap vs off, by lag)")
+    off = {row["lag_s"]: row["controls"]["engine_mean"]
+           for row in vs["off"]["lag_table"]}
+    for name, m in vs.items():
+        if name == "off":
+            continue
+        print(f" {name}: " + "  ".join(
+            f"L{row['lag_s']:g}: {row['controls']['engine_mean']:.3f} "
+            f"({(row['controls']['engine_mean'] / off[row['lag_s']] - 1) * 100:+.1f}%)"
+            for row in m["lag_table"]))
+    print("\nSPEEDER (snap should stay silent — the bleed is honest "
+          "model error)")
+    for name, m in vs.items():
+        mt = m["manoeuvre"]["speeder"]
+        print(f" {name}: lag1 bins " + " ".join(
+            f"{row['engine_lag1_mean']:.3f}" for row in mt["rows"])
+            + f" | snaps fired: "
+              f"{m['snap_stats']['speeder']['n_snaps'] if name != 'off' else 0}")
+    print("\nEXCEEDANCE PER REGIME (serve level, design point "
+          f"{EngineObject.STATED_EXCEEDANCE:.3f})")
+    for cname in ("controls", "speeder", "reverser"):
+        for name, m in vs.items():
+            print(f" {cname:>9} {name:>4}: " + " ".join(
+                f"L{row['lag_s']:g}={row[cname]['exceedance']:.2f}"
+                for row in m["lag_table"]))
+    print("\nCORRECTION EXCEEDANCE (trailing 100, per object)")
+    for name, m in vs.items():
+        print(f" {name}: " + ", ".join(
+            f"{n} {v:.3f}" for n, v in
+            m["correction_exceedance_trailing100"].items()))
+
+
 if __name__ == "__main__":
-    run()
+    import sys
+    if "--snap" in sys.argv:
+        run_snap()
+    else:
+        run()

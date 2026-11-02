@@ -191,7 +191,100 @@ synthesizer argument to bite; it has to have rhythm.
    residual ≫ band); the earned next step is a snap rule —
    residual > 3× band resets the velocity EMA to the measured
    delta — graded by recovery time, the metric this experiment
-   defines. Not built here; named as the follow-up experiment.
+   defines. **Built and measured in the SNAP section below: the
+   rule is right and 3× is the right threshold, but graded
+   against the live σ_r it is toothless — the triggering residual
+   inflates the very band the next correction is judged by. The
+   updated rule: a residual that beats the snap threshold is a
+   regime change and must be excluded from the error-model EMA
+   (or σ_r frozen while a snap transient is open), so follow-on
+   contradictions grade against the pre-event band.**
 5. **Rhythm learning belongs in the lens for every stream class,**
    including discrete ones. The C echo's sampler was wrong 100%
    at odd lags on rhythm alone.
+
+## SNAP: the follow-up experiment, measured
+
+Design rule 4's named follow-up, built as a strategy flag on the
+same engine (`EngineObject.snap_k`; `python3 run_experiment.py
+--snap`, full numbers in `snap_results.json`). Identical streams
+(seed 20261101) — a comparability audit first: the snap-off
+variant reproduces every v1 engine mean exactly, so the sweep
+compares policies, not streams.
+
+**The rule.** A correction whose residual beats k × the band
+stated *before* the read is a contradiction, not noise: velocity
+resets to the measured read-to-read delta instead of EMA-blending
+toward it. **Guard:** a contradiction may not be judged from a
+blind interval — if the correction's extrapolation age exceeds
+the lens freshness window (the dropped-read gap case), the snap
+is suppressed and the engine blends as usual; a real
+contradiction persists and fires on the next on-rhythm
+correction. The guard is unit-tested (gap suppresses, next
+on-rhythm read fires). In this stream it was never exercised:
+0 suppressions at every k, and an age audit of every fired snap
+shows all landed on-rhythm (none post-gap) — the reversal did
+not hide in a drop, and the guard's in-stream cost was zero.
+
+**Reverser recovery** (lag-1 engine error by window after the
+flip; baseline median 0.115 for every variant; sampler never
+returns below the engine baseline — its post-flip error *is* its
+cruise level):
+
+| variant | [0,1) | [1,2) | [2,4) | [4,8) | recovery window | time-to-baseline | velocity re-converged |
+|---|---|---|---|---|---|---|---|
+| snap off | 2.303 | 6.919 | 2.452 | 0.438 | [8, 16) | 6.00 s | 8 corrections |
+| snap 2× | 2.320 | 5.778 | **0.157** | **0.122** | **[2, 4)** | **2.00 s** | **2 corrections** |
+| snap 3× | 2.303 | 5.780 | 1.674 | 0.309 | [8, 16) | 6.00 s | 7 corrections |
+| snap 5× | identical to 3× in every measure | | | | | | |
+
+**Snap accounting** (fired / objects):
+
+| variant | cruiser | glider | speeder | reverser |
+|---|---|---|---|---|
+| 2× | 8 | 4 | 4 | 5 |
+| 3× | 0 | 0 | 0 | 1 |
+| 5× | 0 | 0 | 0 | 1 |
+
+**Why 3× is toothless as implemented.** At 3× (and 5×) exactly
+one snap fires: the straddle read at t=45.251, residual ratio
+8.97×. It resets velocity to the straddle-interval average —
+then nothing. The next correction's residual is 1.99, but the
+straddle read's own residual (1.56) has already been absorbed
+into the resid_ms EMA, inflating σ_r ~5×, so the follow-on
+contradiction grades at only ~2× the widened band and the
+engine falls back to EMA for the remaining convergence
+(7 corrections, time-to-baseline unmoved). The band is
+contaminated by the event it exists to detect. At 2× the second
+snap *does* fire (t=45.846, ratio 2.79 against the inflated
+band; ~10×+ against the pre-event band) and recovery collapses
+to 2 corrections / 2.00 s — but 2× sits inside the error model's
+noise tail: every false snap at 2× has ratio 2.00–2.67, and
+there are 16 of them (12 on the controls; 4 on the speeder,
+whose silence is required — two land just before acceleration
+onset and worsen its [0, 1) bin 0.139 → 0.291). The price shows
+in control error: +4.2% at lag 0 growing to +14.0% at lag 1 and
++22.6% at lag 5. At 3×/5× the cost side is exactly zero: no
+false snaps anywhere, speeder bins bit-identical to snap-off,
+control error +0.0% at every lag.
+
+**Calibration re-grade.** At 3×/5×, serve exceedance per regime
+is v1's within noise (controls and speeder identical; reverser
+0.09/0.08 → 0.10/0.10 at lag 0/0.5) and correction exceedance is
+unchanged (0.25–0.32 across objects and variants). Snap does not
+disturb the calibration story — because, at 3×, it barely fires.
+At 2× the false snaps tax calibration where they tax error:
+control exceedance at long lags rises 0.00 → 0.02–0.04, speeder
+lag-0.5 0.24 → 0.29.
+
+**Verdict.** No bare constant earns the seat. 2× buys the
+recovery and pays for it in false snaps; 3× and 5× are free and
+nearly useless. The threshold is not the problem — the band is.
+3× is the right multiple of an *honest* band, and the honest
+band is the pre-event one: per updated design rule 4, a
+snap-grade residual is a regime change, not a sample of the
+error distribution, and must not enter the resid_ms EMA (or σ_r
+freezes while a snap transient is open). That decontamination —
+graded by this same recovery metric — is the next experiment.
+Until it lands, the engine ships snap-off, with 3× armed only
+where a false snap is cheaper than a slow recovery.

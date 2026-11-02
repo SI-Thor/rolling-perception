@@ -115,5 +115,65 @@ class TestToleranceAndExceedance(unittest.TestCase):
                                self.lens.stale_threshold)
 
 
+def warmed_engine(lens, snap_k=None, n=40):
+    """An engine warmed on wobbly constant-velocity motion (vx ~ +3)
+    until sigma_r has settled to the wobble level (~0.04). Returns
+    (engine, t_last, x_last)."""
+    e = EngineObject("t")
+    e.snap_k = snap_k
+    t = x = 0.0
+    for i in range(n):
+        t = i * 0.5
+        x = 3.0 * t + (0.02 if i % 2 else -0.02)
+        e.correct(t, x, 0.0, lens)
+    return e, t, x
+
+
+class TestSnapRule(unittest.TestCase):
+    def setUp(self):
+        self.lens = fed_lens([0.5] * 30)   # threshold exactly 0.5
+
+    def test_snap_fires_on_true_reversal(self):
+        e, t_last, x_last = warmed_engine(self.lens, snap_k=3.0)
+        self.assertEqual(e.n_snaps, 0)        # no warm-up false snaps
+        # velocity flips +3 -> -3 at t_last; next read is reversed
+        e.correct(t_last + 0.5, x_last - 1.5, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 1)
+        self.assertAlmostEqual(e.vx, -3.0, delta=0.2)
+        # and the following read is unremarkable: no second snap
+        e.correct(t_last + 1.0, x_last - 3.0, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 1)
+
+    def test_without_snap_the_same_reversal_only_blends(self):
+        e, t_last, x_last = warmed_engine(self.lens, snap_k=None)
+        e.correct(t_last + 0.5, x_last - 1.5, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 0)
+        # EMA(0.35) from +3 toward -3 lands near +0.9: still the
+        # wrong sign — the failure the snap rule exists to fix.
+        self.assertGreater(e.vx, 0.3)
+
+    def test_guard_suppresses_gap_artefact_then_snaps_on_rhythm(self):
+        e, t_last, x_last = warmed_engine(self.lens, snap_k=3.0)
+        v_pre = e.vx
+        # the object reverses at t_last + 1.3, but no read arrives
+        # for 1.5 s (a dropped-read gap): the gap-exit residual
+        # beats 3x band, yet the correction is age 1.5 > threshold
+        # 0.5, so the guard must refuse to judge it a contradiction.
+        z_gap = x_last + 3.0 * 1.3 - 3.0 * 0.2
+        e.correct(t_last + 1.5, z_gap, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 0)
+        self.assertEqual(e.n_snap_suppressed, 1)
+        # velocity is the plain EMA blend toward the gap-average
+        # delta — NOT a reset to it.
+        mvx = (z_gap - x_last) / 1.5
+        self.assertAlmostEqual(
+            e.vx, v_pre + e.alpha_v * (mvx - v_pre), places=6)
+        # the contradiction persists, so the next on-rhythm read
+        # (object still moving at -3) snaps.
+        e.correct(t_last + 2.0, z_gap - 1.5, 0.0, self.lens)
+        self.assertEqual(e.n_snaps, 1)
+        self.assertAlmostEqual(e.vx, -3.0, delta=0.2)
+
+
 if __name__ == "__main__":
     unittest.main()

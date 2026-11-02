@@ -106,6 +106,23 @@ class EngineObject:
     exceed_hist: list[int] = field(default_factory=list)  # 1 = exceeded
     _prev_z: tuple[float, float] | None = None
     _prev_t: float | None = None
+    # snap rule (Slice 3 follow-up): None = disabled (the v1 engine).
+    # When set to k, a correction whose residual beats k x the band
+    # stated *before* the read is a CONTRADICTION (the world changed
+    # regime — e.g. a velocity reversal), not noise: the velocity
+    # estimate is reset to the measured read-to-read delta instead
+    # of being EMA-blended toward it over ~8 corrections.
+    # Guard: a contradiction may not be judged from a blind
+    # interval. If the correction's extrapolation age exceeds the
+    # lens freshness window (the dropped-read gap case), the
+    # residual mixes world change with gap-blindness and the linear
+    # band is the wrong price for it — blend as usual. A real
+    # contradiction persists and snaps on the next on-rhythm read.
+    snap_k: float | None = None
+    n_snaps: int = 0
+    n_snap_suppressed: int = 0   # residual beat k x band but age-gated
+    snap_events: list[tuple[float, float, float, float]] = field(
+        default_factory=list)    # (t, age, residual, residual / band)
 
     # Stated-band model: band(a) = sigma_r * max(1, a / period).
     # sigma_r is the RMS radial residual of one-period extrapolation.
@@ -145,13 +162,28 @@ class EngineObject:
             else:
                 self.resid_ms += self.alpha_r * (r * r - self.resid_ms)
             self.n_resid += 1
+            # snap decision, graded against the same pre-stated band
+            # as the exceedance bit — the engine may not use the
+            # read's own news to widen the band it is judged by.
+            snap = False
+            if (self.snap_k is not None and stated > 0.0
+                    and r > self.snap_k * stated):
+                if age <= lens.stale_threshold:
+                    snap = True
+                else:
+                    self.n_snap_suppressed += 1
             # velocity update from raw read deltas
             dt = t - self._prev_t
             if dt > 0:
                 mvx = (zx - self._prev_z[0]) / dt
                 mvy = (zy - self._prev_z[1]) / dt
-                self.vx += self.alpha_v * (mvx - self.vx)
-                self.vy += self.alpha_v * (mvy - self.vy)
+                if snap:
+                    self.vx, self.vy = mvx, mvy
+                    self.n_snaps += 1
+                    self.snap_events.append((t, age, r, r / stated))
+                else:
+                    self.vx += self.alpha_v * (mvx - self.vx)
+                    self.vy += self.alpha_v * (mvy - self.vy)
         self.px, self.py = zx, zy
         self.t_corr = t
         self._prev_z = (zx, zy)
@@ -181,6 +213,7 @@ class EngineObject:
         import copy
         s = copy.copy(self)
         s.exceed_hist = list(self.exceed_hist)
+        s.snap_events = list(self.snap_events)
         return s
 
 
