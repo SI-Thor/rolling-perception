@@ -12,7 +12,12 @@ Outputs under ~/confluence-play/slice3/library/:
   media-index.jsonl     the capped selection, fully probed
   summary.json          totals
   ledger/items/*.txt    slice-1 console item records
-  media/                symlinks to originals (console MEDIA dir)
+  media/                HARDLINKS to originals (console MEDIA dir).
+                        Not symlinks: the console's /files guard
+                        resolve()s paths and refuses symlink targets
+                        outside the media root (measured 404). A
+                        hardlink is the same inode — referenced, not
+                        copied — and resolves inside the root.
   posters/  thumbs/     generated images (verified decodable)
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -202,7 +207,7 @@ def main():
         link = OUT/"media"/shelf_name
         if link.is_symlink() or link.exists():
             link.unlink()
-        link.symlink_to(src)
+        os.link(src, link)
         poster_rel = thumb_rel = None
         if r["kind"] == "video":
             dest = OUT/"posters"/f"{iid}.jpg"
