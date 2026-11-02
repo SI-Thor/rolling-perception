@@ -30,11 +30,13 @@ reporting" (heartbeat over ~90 s old) has a camera/app
 problem — check its app is still streaming; everything stale
 means restart (command 1).
 
-One known defect (2026-11-02): the page's change feed
-under-reports — verdicts are written to the ledger text but
-may not appear in the feed. Judge "what changed" from the
-ledger: `~/confluence/ledger/streams/<id>/events.jsonl`.
-Health, the shelf and corrections are unaffected.
+One defect was found and fixed on 2026-11-02: the page's
+change feed under-reported (verdict rows weren't picked up).
+Consoles installed from the current repo carry the fix; if a
+page's feed looks emptier than the ledger
+(`~/confluence/ledger/streams/<id>/events.jsonl`), update the
+console from the repo. Health, the shelf and corrections were
+never affected.
 
 ## Where the logs live
 

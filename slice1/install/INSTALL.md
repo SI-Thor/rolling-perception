@@ -325,15 +325,15 @@ Rules of thumb:
 - **All heartbeats stale** — the watcher itself has stalled
   (fault 2).
 
-**Known defect (found 2026-11-02 by the install proof run,
-recorded in INSTALL-PROOF.md):** the console's change *feed*
-currently under-reports — the watcher writes its verdict rows
-with a `changed_tiles` field the console's feed reader doesn't
-pick up, so verdicts that are plainly in `events.jsonl` may
-not appear on the page. Stream health, the shelf, and
-corrections all work; the ledger text is complete and correct.
-Until that mismatch is fixed, judge "what changed" from
-`events.jsonl`, not from the page's feed.
+**Defect found and fixed (2026-11-02):** the install proof run
+caught the console's change *feed* under-reporting — the watcher
+writes verdict rows with a `changed_tiles` field the feed reader
+didn't pick up, so verdicts in `events.jsonl` didn't appear on
+the page. Fixed in the console the same day (both row shapes now
+surface; 17/17 checks in `slice1/console/test_console.py`).
+Installs from this tree carry the fix; a console deployed before
+it should be updated from the repo. The ledger text was always
+complete and correct — this was a display bug, never a data one.
 
 ### Logs
 
