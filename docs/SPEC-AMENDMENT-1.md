@@ -46,3 +46,14 @@ Consequences, binding on the build order:
    technician's ten-minute install. Humans wire cells and judge
    experience; agents grind the internals. A technician never
    needs to know which model or scheduler a cell runs this month.
+7. **Converters are the platform's problem (Casey, same day).** The
+   technician thinks like the person who wires a building: what
+   connects where, and which protocol the connection speaks. Where
+   two things don't natively speak — a camera's stream into the
+   ledger's text, a model's dialect into a verdict — the back end
+   provides the converter, maintained by the agents. The
+   technician's craft is wiring, endpoints and protocols; what a
+   converter does inside is one more cell interior he never opens.
+   A connection that needs a human to translate is a missing
+   converter, and a missing converter is a platform bug, not a
+   service call.
