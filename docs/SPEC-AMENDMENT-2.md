@@ -53,3 +53,14 @@ starting point and the ledger/health surfaces from Slice 1 as its
 face. Its acceptance will include a from-the-chair test: a
 conversation held through a laptop browser, at the table, with the
 system answering from the live ledger.
+
+## Lineage (one paragraph, deliberately no more)
+
+Confluence is the quilt paradigm wearing product clothes: anything
+is a cell in a graph — a stream, a terminal, a model, a camera, a
+voice — and the connections between cells are second-class citizens
+next to the function each cell achieves with whatever power and IO
+is attached to it. The substrate's rings are one rendering of
+cell-to-cell flow; the ledger is the graph written as text. The
+build stays on Confluence; the paradigm is the inheritance, not a
+second project.
