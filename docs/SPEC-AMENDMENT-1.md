@@ -57,3 +57,11 @@ Consequences, binding on the build order:
    A connection that needs a human to translate is a missing
    converter, and a missing converter is a platform bug, not a
    service call.
+   Corollary (Casey): this is why coding agents are the most
+   powerful thing to come out of AI — they make a *translation*
+   become a *conversion*. A translation is an event: a human
+   understands how two things map, and the understanding evaporates
+   when they leave the room. A conversion is an asset: the mapping
+   exists as working machinery, forever, for everyone. Agents
+   collapse the cost between the two, so comprehension compiles
+   into infrastructure — every explanation only has to happen once.
