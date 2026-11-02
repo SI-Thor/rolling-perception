@@ -32,3 +32,17 @@ Consequences, binding on the build order:
 4. **The customer is a household; the channel is a technician.**
    Design reviews must pass both readers: the person who lives
    with the feed, and the person who gets called when it breaks.
+5. **One wiring model for the technician (Casey, same day).** The
+   uniformity is not an aesthetic — it is the service model. If
+   everything is a cell with power and IO attached, the technician
+   learns ONE way to wire anything together: a camera, a voice, a
+   model, a stream. No per-device folklore, no special cases to
+   memorise. The complexity lives inside the cells.
+6. **Agents are the optimisers in the background.** What lives
+   inside a cell — the actual logic of the application — is
+   optimised continuously by coding agents, and the scoreboard for
+   that optimisation is the human experience of the system: the
+   feed's trustworthiness, the presence at the table, the
+   technician's ten-minute install. Humans wire cells and judge
+   experience; agents grind the internals. A technician never
+   needs to know which model or scheduler a cell runs this month.
