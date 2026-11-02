@@ -3,9 +3,9 @@
 The low-level engine of rolling-perception / Confluence, documented
 against the code as it stands today. Every structural claim below was
 checked against the tree (sources read, `cargo tree` run,
-`cargo test --workspace` run: **75 passed, 0 failed** on the dev VM
-(recounted after the connect + harden lanes landed; the count in the
-first edition of this book, 55, predated their 20 added tests),
+`cargo test --workspace` run: **90 passed, 0 failed** on the dev VM
+(recounted per-package at the round-2 assembly; this book's first
+edition said 55, its second 75 — both predated the lanes that followed),
 2026-11-01). Where the founding documents (`PLAN.md`, `DESIGN.md`)
 and the code disagree, this book sides with the code and says so —
 §4 collects the divergences.
@@ -137,7 +137,9 @@ it in load-bearing places. This table is the honest reconciliation.
 | D8 | Sections are f32 blocks with per-edge overlap coordinate sets; incidence applied via CSR (§4) | Built form is narrower: **one f64 scalar per graph node**, edge list (not CSR), whole-"section" differences only | sheaf.rs module docs state this scope honestly | **partial** — the consensus special case, exactly as PLAN §5.3 scoped it; DESIGN §4's richer structure was not built |
 | D9 | INV-S4: NaN in a section ⇒ energy NaN *and the step refuses* with `SheafError::NonFinite` (§4, F6) | No error type, no finiteness check: `smooth_step` propagates NaN silently | — | **UNPROVEN** |
 | D10 | α validated at construction, `0 < α ≤ 2/λmax` via power-iteration `spectral_bound`; out-of-range α is an error (§4) | No validation and no `spectral_bound` function; α is a bare caller-supplied `f64` (call sites use 0.1 with the bound argued in comments) | — | **UNPROVEN** |
-| D11 | The sheaf step allocates nothing (pre-allocated scratch) (§4) | `laplacian_apply` **allocates a fresh `Vec<f64>` on every call** | code, `sheaf.rs::laplacian_apply` | **UNPROVEN — contradicted by the code** |
+| D11 | The sheaf step allocates nothing (pre-allocated scratch) (§4) | `laplacian_apply_into` + counting-allocator test (0 allocations steady-state, bitwise parity with the legacy path) | `sheaf.rs`, `tests/sheaf_alloc.rs` | **PROVEN** (2026-11-01 night, SHEAF-FIX: was "contradicted by the code" in this book's first edition; the legacy signature delegates to the into-path) |
+| D12 | DESIGN §3.2's SPSC ring is the engine's queue centre (§3.2) | `SpscRing` built as written; head-to-head in docs/RING-BENCH.md: SPSC faster (6.7–11.4 vs 2.6–5.6 M msgs/s) **and the shipped Disruptor, consumed as a queue, tore 5–27% of reads silently in every run** (no consumer release/counters) | `spsc.rs`, `tests/spsc_properties.rs`, RING-BENCH.md | **PARTIAL — verdict "both, placed differently"**: SPSC takes per-lane cascade queues; the Disruptor keeps multi-producer junctions + latest-value points; the shipped ring used as a paced queue is REFUTED and must not survive. §3.4's DropNewest is unimplementable as written (ambiguity A1, repaired via a gap signal) — DESIGN needs amendment |
+| D13 | A GPU executor can fill the pipeline's executor seam (connect round) | cuda-thor's public API cannot compile/load/launch any kernel but the hardcoded `perceive` (5 named gaps, gpu.rs); the executor refuses typed (`GpuApiGap`) and Thor-verified the refusal on real hardware; CPU bar measured (0.268 µs @ 64 nodes) + launch pickup 1.1 µs ⇒ GPU refine cannot win below ~4,096 nodes regardless | `rolling-pipeline` README (Composition), executor.rs | **UNPROVEN — blocked on specified cuda-thor API additions; low-stakes at current scales by measurement** |
 | D12 | INV-G1/G2: gated output inside == ungated; outside never modified (§7.4) | `gating.rs::gated_apply` | `gated_result_identical_on_roi_and_untouched_outside` (also asserts `f` is never *called* outside) | **proven** |
 | D13 | INV-D2: gate churn bounded by deadband (**band + yaw**: challenger must win for `yaw_ticks` consecutive ticks) (§6, §7.4) | `Director` implements the band (deadband + max-step) but **no yaw counter** — it moves on the first out-of-band tick; churn is counted (moves/holds) but no oscillating-input churn test exists | `director_deadband_holds_and_steps` (band half) | **partial** |
 | D14 | INV-M1: the harness *rejects* a comparison whose counted work differs (§7.2, §7.4) | Tests assert equality of checksum and of the whole `Ops` struct across schedulers; no test feeds a rigged node and asserts refusal | e2e `schedulers_same_work_rolling_emits_more_and_first` | **partial** |

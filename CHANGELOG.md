@@ -6,6 +6,39 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — round 2: the book's findings, settled, 2026-11-01 (night)
+
+### Measured
+- **The ring fork (docs/RING-BENCH.md)**: DESIGN §3.2's `SpscRing`
+  built as written. It beats the shipped Disruptor on speed
+  (6.7–11.4 vs 2.6–5.6 M msgs/s; ping-pong 0.35–0.82 vs 1.47–1.58 µs)
+  — and the shipped ring, consumed as a queue (the only consumer
+  its API offers), **tore 5–27% of 1M reads silently in every run**.
+  Verdict: both, placed differently; queued use of the shipped ring
+  is refuted. Two design defects logged: §3.4 DropNewest is
+  unimplementable as written (repaired via a gap signal);
+  DropOldest needs consumer revalidation.
+- **Sheaf allocation closed**: `laplacian_apply_into` — zero
+  allocations proven by a counting-allocator test, bitwise parity
+  with the legacy path; 1.81× at 16 nodes, ≈1.0× at 1,024 (the
+  allocation was allocator traffic, not math cost). ARCHITECTURE
+  claim D11: contradicted → **proven**.
+- **GPU executor: blocked, precisely** — cuda-thor's public API
+  cannot compile/load/launch any kernel but the hardcoded
+  `perceive` (five named gaps). The executor probes real hardware
+  and refuses typed (`GpuApiGap`), Thor-verified; the crossover
+  bound shows GPU refine cannot win below ~4,096 nodes anyway.
+  The five API additions that unblock it are specified in the
+  rolling-pipeline README.
+- **Panel round 3** (docs/SPEC-PANEL-3.md, $0.1085): the cache fix
+  works on 3 of 4 models (~98% of a ~31k-token prefix on call 2;
+  MiMo cached 0 — budgeted uncached from now on). Q1's convergence
+  is superseded for queue use by the ring bench (referee
+  addendum in the synthesis). Graduation bar (Q4): the repo
+  currently graduates as a reference implementation / design
+  record, not yet as a stranger-ready tool.
+- Workspace tests 75 → **90**.
+
 ## [Unreleased] — low-level round: connect + harden + the engine book, 2026-11-01 (night)
 
 ### Connected

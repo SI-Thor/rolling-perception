@@ -33,6 +33,7 @@ version = "0.1.0"
 name = "rolling-pipeline"
 version = "0.1.0"
 dependencies = [
+ "cuda-thor",
  "rolling-adaptive",
  "rolling-perception",
  "rolling-substrate-core",

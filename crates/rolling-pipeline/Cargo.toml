@@ -9,13 +9,23 @@ license = "MIT OR Apache-2.0"
 rolling-adaptive = { path = "../rolling-adaptive" }
 rolling-perception = { path = "../rolling-perception" }
 rolling-substrate-core = { path = "../rolling-substrate-core" }
+# Only used behind `gpu-shadow`: the probe in src/executor.rs calls
+# cuda-thor's public Gpu API. Enabling it turns on cuda-thor's own
+# `cuda-thor` feature, whose build.rs links libcuda + libnvrtc from
+# the Thor's aarch64 JetPack paths — so a `gpu-shadow` build only
+# links on the Thor (or a machine with the same layout). CPU builds
+# never see it.
+cuda-thor = { path = "../cuda-thor", optional = true, features = ["cuda-thor"] }
 
 [features]
 default = []
-# The two-stream-shadow GPU executor seam (see src/executor.rs). The
-# feature only compiles the documented stub type: it carries no GPU
-# code, links nothing, and its execute_tick returns a typed
-# NoGpuBackend error. It exists so downstream wiring can name the GPU
-# backend before the backend lands. OFF by default; CPU builds are
+# The two-stream-shadow GPU executor (see src/executor.rs). With the
+# feature on, GpuShadowExecutor links cuda-thor, probes the device at
+# construction, and records a placement receipt per attempted tick.
+# It still executes NO tick: cuda-thor's public API (v0.2) cannot
+# express a custom kernel launch (see API_GAP in src/executor.rs and
+# the README's Composition section), so every tick is refused with a
+# typed error naming the blocker — NoGpuBackend when no device is
+# present, GpuApiGap when one is. OFF by default; CPU builds are
 # unaffected either way.
-gpu-shadow = []
+gpu-shadow = ["dep:cuda-thor"]

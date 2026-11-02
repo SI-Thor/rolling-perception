@@ -51,12 +51,26 @@
 //!
 //! * [`Pipeline`] itself implements [`Executor`] (`"cpu-rings"`) —
 //!   the shipped backend, delegating to [`Pipeline::run_tick`].
-//! * Behind the `gpu-shadow` cargo feature (off by default), the
-//!   [`GpuShadowExecutor`] **stub**: the specified type, capabilities
-//!   declared, construction wired — and `execute_tick` returns
-//!   [`ExecutorError::NoGpuBackend`]. It is a compile-checked
-//!   placeholder for the backend described above, not a fake GPU
-//!   implementation: it computes nothing and says so, typed.
+//! * Behind the `gpu-shadow` cargo feature (off by default),
+//!   [`GpuShadowExecutor`] is wired for real up to the exact point
+//!   `cuda-thor`'s public API (v0.2) stops: construction probes the
+//!   device through that API and records what it found
+//!   ([`ProbeOutcome`]), every attempted tick appends a placement
+//!   receipt ([`TickReceipt`]), and every tick is then **refused** —
+//!   [`ExecutorError::NoGpuBackend`] when the probe found no device,
+//!   [`ExecutorError::GpuApiGap`] when it found one. The gap is not
+//!   a matter of effort in this crate: the API exposes no way to
+//!   compile a kernel (its NVRTC entry point is private), no way to
+//!   load one by name (`Module::load` hardcodes `"perceive"`), no
+//!   launch signature other than the perceive filter's
+//!   (f32 in → f32 out, `i32 n`), no byte-level buffer copy (uploads
+//!   are `&[f32]` only, so an `f64` section cannot even be staged),
+//!   and no second stream (one `Gpu` owns exactly one). A "GPU
+//!   executor" that ran the CPU stage closures anyway would be a
+//!   lie with a receipt printer; this one prints the receipt for
+//!   the refusal instead. [`API_GAP`] names the blockers and the
+//!   README's Composition section specifies the smallest cuda-thor
+//!   additions that would unblock the fill.
 
 use crate::{Pipeline, Published, DIM};
 use std::fmt;
@@ -79,9 +93,18 @@ pub struct ExecutorCaps {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutorError {
     /// The backend this executor names is not present in this build.
-    /// Returned by the `gpu-shadow` stub until the real two-stream
-    /// shadow backend lands behind this seam.
+    /// Returned by the `gpu-shadow` executor when its construction
+    /// probe finds no usable GPU.
     NoGpuBackend { backend: &'static str },
+    /// A GPU is present, but the backend cannot express its kernel
+    /// through the GPU crate's public API, so it refuses rather than
+    /// silently running the CPU closures under a GPU name. `gap`
+    /// names the first blocking API absence (see
+    /// [`API_GAP`][crate::executor::API_GAP] under `gpu-shadow`).
+    GpuApiGap {
+        backend: &'static str,
+        gap: &'static str,
+    },
     /// Payload was not exactly one grid.
     BadInputLength { expected: usize, got: usize },
 }
@@ -91,6 +114,9 @@ impl fmt::Display for ExecutorError {
         match self {
             ExecutorError::NoGpuBackend { backend } => {
                 write!(f, "no GPU backend in this build (executor '{backend}')")
+            }
+            ExecutorError::GpuApiGap { backend, gap } => {
+                write!(f, "GPU present but executor '{backend}' cannot run: {gap}")
             }
             ExecutorError::BadInputLength { expected, got } => {
                 write!(f, "payload must be {expected} elements, got {got}")
@@ -138,24 +164,170 @@ impl Executor for Pipeline {
     }
 }
 
-/// The two-stream shadow GPU executor, as specified in the module
-/// docs — **stub**. Compiled only with `--features gpu-shadow`.
-///
-/// The type exists so the seam is real in code: wiring, capability
-/// checks and error handling can all be written and tested against it
-/// before the backend (cuda-thor's FFI route, PLAN §6) is plugged in.
-/// It holds no device state and computes nothing; every tick is
-/// refused with [`ExecutorError::NoGpuBackend`].
+/// The first blockers in `cuda-thor`'s public API (v0.2), in the
+/// order the fill meets them. Any one of them alone stops the
+/// sheaf-stencil kernel; together they stop it five times over.
+/// The README's Composition section specifies the smallest API
+/// additions that would remove them.
 #[cfg(feature = "gpu-shadow")]
-#[derive(Debug, Default)]
+pub const API_GAP: &str = "cuda-thor v0.2 public API cannot express the sheaf stencil: \
+    nvrtc_compile is private (no kernel compilation), Module::load hardcodes the \
+    kernel name \"perceive\", Module::launch hardcodes the perceive signature \
+    (f32 in/out, i32 n), DevBuf::upload accepts only &[f32] (no f64 staging), \
+    and Gpu owns exactly one stream (no second stream for the shadow)";
+
+/// What [`GpuShadowExecutor`]'s construction probe found, through
+/// `cuda-thor`'s public API. Recorded, not acted on beyond the
+/// refusal choice: the executor holds no device state afterwards
+/// (the probed `Gpu` is dropped — keeping a context it cannot use
+/// would be theatre).
+#[cfg(feature = "gpu-shadow")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeOutcome {
+    /// A device answered: driver initialised, primary context
+    /// retained, memory figures read back. The numbers are the
+    /// device's own (`cuMemGetInfo`), recorded at probe time.
+    GpuPresent {
+        free_bytes: usize,
+        total_bytes: usize,
+    },
+    /// No usable device (driver absent, init failed, or no device
+    /// 0). `reason` is cuda-thor's error string, verbatim.
+    NoGpu { reason: String },
+}
+
+/// Where one stage ran for one tick — the placement half of a
+/// [`TickReceipt`]. `NotRun` is a real value, not an omission:
+/// a refused tick records that nothing ran, stage by stage.
+#[cfg(feature = "gpu-shadow")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageRun {
+    /// Ran on the CPU (this crate's rings).
+    Cpu,
+    /// Ran on the GPU production stream (stream A).
+    GpuProduction,
+    /// Ran on the GPU shadow stream (stream B), as `refine` is
+    /// designed to until its calibration window passes.
+    GpuShadow,
+    /// Did not run — the tick was refused before any stage executed.
+    NotRun,
+}
+
+/// The two-stream shadow arrangement's intended placement for a
+/// stage, per the module docs' execution notes. This is the design
+/// map the receipts are read against; it is not a claim that any
+/// stage has ever run there.
+#[cfg(feature = "gpu-shadow")]
+pub fn intended_placement(stage: usize) -> StageRun {
+    match stage {
+        crate::STAGE_PERCEIVE | crate::STAGE_DECIDE => StageRun::GpuProduction,
+        crate::STAGE_REFINE => StageRun::GpuShadow,
+        // direct + publish stay on CPU permanently (module docs).
+        _ => StageRun::Cpu,
+    }
+}
+
+/// One attempted tick's receipt: which stages ran where, and the
+/// refusal if none did. Appended by `execute_tick` for every
+/// well-formed payload, executed or not.
+#[cfg(feature = "gpu-shadow")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickReceipt {
+    /// Tick index within this executor (counts attempts, in order).
+    pub tick: u64,
+    /// Per-stage placement, in cascade order ([`crate::STAGE_NAMES`]).
+    pub placements: [StageRun; 5],
+    /// `Some` when the tick was refused (and every placement is
+    /// [`StageRun::NotRun`]); `None` when it executed.
+    pub refusal: Option<ExecutorError>,
+}
+
+/// The two-stream shadow GPU executor. Compiled only with
+/// `--features gpu-shadow`.
+///
+/// Construction probes the device for real (driver init, primary
+/// context, `cuMemGetInfo` — all through cuda-thor's public API)
+/// and records the outcome. Execution is then refused, typed, on
+/// every tick: [`ExecutorError::NoGpuBackend`] when the probe
+/// found no device, [`ExecutorError::GpuApiGap`] when it found
+/// one but the API cannot express the refine stencil (see
+/// [`API_GAP`]). The executor never runs the CPU stage closures
+/// under its GPU name — a fallback that did would produce correct
+/// numbers and a false receipt, which is worse than a refusal.
+/// When cuda-thor grows the five additions specified in the
+/// README, `refine` lands on the shadow stream here and the
+/// receipts start recording [`StageRun::GpuShadow`] for it.
+#[cfg(feature = "gpu-shadow")]
+#[derive(Debug)]
 pub struct GpuShadowExecutor {
-    _seam_only: (),
+    probe: ProbeOutcome,
+    receipts: Vec<TickReceipt>,
+    next_tick: u64,
 }
 
 #[cfg(feature = "gpu-shadow")]
 impl GpuShadowExecutor {
+    /// Construct and probe the hardware (see [`ProbeOutcome`]).
     pub fn new() -> Self {
-        Self::default()
+        Self::with_probe(Self::probe_hardware())
+    }
+
+    /// Construct with a recorded probe outcome instead of probing.
+    /// This is how tests and wiring exercise both refusal paths
+    /// without depending on the machine they run on.
+    pub fn with_probe(probe: ProbeOutcome) -> Self {
+        Self {
+            probe,
+            receipts: Vec::new(),
+            next_tick: 0,
+        }
+    }
+
+    /// Probe through cuda-thor's public API: `Gpu::new` +
+    /// `mem_info`, then drop the `Gpu` (context released). Any
+    /// error becomes [`ProbeOutcome::NoGpu`] with the reason kept.
+    fn probe_hardware() -> ProbeOutcome {
+        match cuda_thor::gpu::Gpu::new() {
+            Ok(gpu) => match gpu.mem_info() {
+                Ok((free_bytes, total_bytes)) => ProbeOutcome::GpuPresent {
+                    free_bytes,
+                    total_bytes,
+                },
+                Err(e) => ProbeOutcome::NoGpu { reason: e },
+            },
+            Err(e) => ProbeOutcome::NoGpu { reason: e },
+        }
+    }
+
+    /// The recorded construction probe.
+    pub fn probe(&self) -> &ProbeOutcome {
+        &self.probe
+    }
+
+    /// Every attempted tick's receipt, in order.
+    pub fn receipts(&self) -> &[TickReceipt] {
+        &self.receipts
+    }
+
+    /// The typed refusal this executor's probe implies. Pure: the
+    /// same probe always yields the same refusal.
+    fn refusal(&self) -> ExecutorError {
+        match &self.probe {
+            ProbeOutcome::NoGpu { .. } => ExecutorError::NoGpuBackend {
+                backend: "gpu-two-stream-shadow",
+            },
+            ProbeOutcome::GpuPresent { .. } => ExecutorError::GpuApiGap {
+                backend: "gpu-two-stream-shadow",
+                gap: API_GAP,
+            },
+        }
+    }
+}
+
+#[cfg(feature = "gpu-shadow")]
+impl Default for GpuShadowExecutor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -169,14 +341,28 @@ impl Executor for GpuShadowExecutor {
         ExecutorCaps {
             gpu: true,
             two_stream_shadow: true,
+            // False, and it stays false until a tick can actually
+            // execute on the device: capability means execution,
+            // not presence.
             available: false,
         }
     }
 
-    fn execute_tick(&mut self, _input: &[f32]) -> Result<Published, ExecutorError> {
-        Err(ExecutorError::NoGpuBackend {
-            backend: "gpu-two-stream-shadow",
-        })
+    fn execute_tick(&mut self, input: &[f32]) -> Result<Published, ExecutorError> {
+        if input.len() != DIM {
+            return Err(ExecutorError::BadInputLength {
+                expected: DIM,
+                got: input.len(),
+            });
+        }
+        let refusal = self.refusal();
+        self.receipts.push(TickReceipt {
+            tick: self.next_tick,
+            placements: [StageRun::NotRun; 5],
+            refusal: Some(refusal.clone()),
+        });
+        self.next_tick += 1;
+        Err(refusal)
     }
 }
 
@@ -220,8 +406,10 @@ mod tests {
 
     #[cfg(feature = "gpu-shadow")]
     #[test]
-    fn gpu_shadow_stub_is_typed_and_unavailable() {
-        let mut exec = GpuShadowExecutor::new();
+    fn gpu_shadow_without_gpu_refuses_typed_and_receipts() {
+        let mut exec = GpuShadowExecutor::with_probe(ProbeOutcome::NoGpu {
+            reason: "test: no device".to_string(),
+        });
         assert_eq!(exec.name(), "gpu-two-stream-shadow");
         assert_eq!(
             exec.caps(),
@@ -241,5 +429,54 @@ mod tests {
             }
         );
         assert!(err.to_string().contains("no GPU backend in this build"));
+        // The refusal is receipted: one attempt, nothing ran.
+        assert_eq!(exec.receipts().len(), 1);
+        let r = &exec.receipts()[0];
+        assert_eq!(r.tick, 0);
+        assert!(r.placements.iter().all(|&p| p == StageRun::NotRun));
+        assert_eq!(r.refusal, Some(err));
+    }
+
+    #[cfg(feature = "gpu-shadow")]
+    #[test]
+    fn gpu_shadow_with_gpu_refuses_on_the_api_gap_not_silently_on_cpu() {
+        let mut exec = GpuShadowExecutor::with_probe(ProbeOutcome::GpuPresent {
+            free_bytes: 1 << 30,
+            total_bytes: 2 << 30,
+        });
+        let err = exec
+            .execute_tick(&hotspot_payload(3.0, 3.0, 7))
+            .unwrap_err();
+        match err {
+            ExecutorError::GpuApiGap { backend, gap } => {
+                assert_eq!(backend, "gpu-two-stream-shadow");
+                // The gap names mechanisms, not vibes: each absence
+                // below is checkable against cuda-thor's gpu.rs.
+                assert!(gap.contains("nvrtc_compile is private"), "{gap}");
+                assert!(gap.contains("\"perceive\""), "{gap}");
+                assert!(gap.contains("&[f32]"), "{gap}");
+                assert!(gap.contains("one stream"), "{gap}");
+            }
+            other => panic!("expected GpuApiGap, got {other:?}"),
+        }
+        // A present GPU does not soften the capability claim, and
+        // the receipt still records that no stage ran anywhere.
+        assert!(!exec.caps().available);
+        assert_eq!(exec.receipts().len(), 1);
+        assert!(exec.receipts()[0]
+            .placements
+            .iter()
+            .all(|&p| p == StageRun::NotRun));
+    }
+
+    #[cfg(feature = "gpu-shadow")]
+    #[test]
+    fn gpu_shadow_intended_placement_matches_the_design() {
+        use crate::{STAGE_DECIDE, STAGE_DIRECT, STAGE_PERCEIVE, STAGE_PUBLISH, STAGE_REFINE};
+        assert_eq!(intended_placement(STAGE_PERCEIVE), StageRun::GpuProduction);
+        assert_eq!(intended_placement(STAGE_DECIDE), StageRun::GpuProduction);
+        assert_eq!(intended_placement(STAGE_DIRECT), StageRun::Cpu);
+        assert_eq!(intended_placement(STAGE_REFINE), StageRun::GpuShadow);
+        assert_eq!(intended_placement(STAGE_PUBLISH), StageRun::Cpu);
     }
 }

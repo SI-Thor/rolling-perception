@@ -32,3 +32,21 @@ demonstration: ring claim/publish across laps, multi-producer claim
 uniqueness, Laplacian energy strictly decreasing on inconsistent
 input, the PIR wrap false-positive shown as a counterexample, and
 gating skip counts checked exactly.
+
+## 2026-11-01 (night) — SHEAF-FIX: the allocation lie is closed
+
+DESIGN §4 claims the sheaf step allocates nothing; the engine book
+(ARCHITECTURE D11) recorded that as contradicted — `laplacian_apply`
+allocated a fresh `Vec` per call. Now: `laplacian_apply_into` and
+`smooth_step_into` write into caller-owned buffers with the identical
+accumulation order (output **bit-identical** to the legacy path,
+pinned by a seeded random-graph parity test); the legacy signatures
+are unchanged and delegate. `tests/sheaf_alloc.rs` (counting
+allocator, thread-local) asserts **0 allocations** for the into-path
+in steady state vs exactly 1 per call legacy. Bench
+(`examples/sheaf_bench.rs`, dev VM, release): apply on the 16-node
+harbor-scale grid 99.5 → 54.9 ns/call (1.81×); on a 1,024-node grid
+4,793 → 4,909 ns/call (≈1.0× — at that size the edge work dominates
+and the allocation was never the cost; the win there is the refine
+loop's allocator traffic, 1,000 allocs → 0 over 1,000 steps,
+7.57 → 6.85 ms). Tests: substrate-core 32 → 36, workspace 75 → 79.

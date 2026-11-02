@@ -22,4 +22,5 @@
 pub mod gating;
 pub mod lineage;
 pub mod sheaf;
+pub mod spsc;
 pub mod substrate;

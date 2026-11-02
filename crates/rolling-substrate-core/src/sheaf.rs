@@ -37,6 +37,25 @@
 //! General sheaf Laplacians with non-identity restriction maps are
 //! out of scope and not claimed: this is the constant-sheaf case,
 //! which is the case the email's prose actually describes.
+//!
+//! ## Allocation (2026-11-01, SHEAF-FIX — closes ARCHITECTURE D11)
+//!
+//! DESIGN §4 claims the sheaf step allocates nothing (pre-allocated
+//! scratch); the engine book recorded that as *contradicted*:
+//! `laplacian_apply` allocated a fresh `Vec<f64>` on every call, and
+//! `smooth_step` inherited one allocation per step. That is now
+//! closed. [`SheafGraph::laplacian_apply_into`] writes into a
+//! caller-owned buffer with the *identical* accumulation order (same
+//! edge order, same per-edge expressions), so its output is
+//! bit-identical to the legacy path — pinned by a bitwise-equality
+//! test over seeded random graphs, and an allocation-counting test
+//! (`tests/sheaf_alloc.rs`) proves the into-path performs **zero**
+//! allocations in steady state while the legacy path performs one
+//! per call. [`SheafGraph::smooth_step_into`] is the same step with
+//! caller scratch. The allocating signatures are unchanged and
+//! delegate to the into-paths, so existing consumers
+//! (harbor-watch, rolling-pipeline) are source- and
+//! behaviour-identical. Bench: `examples/sheaf_bench.rs`.
 
 /// A small undirected graph over section nodes, stored as an edge list.
 pub struct SheafGraph {
@@ -103,18 +122,39 @@ impl SheafGraph {
             .sum()
     }
 
+    /// Apply the Laplacian into a caller-owned buffer:
+    /// `(L s)_i = deg(i)·s_i − Σ_{j~i} s_j`, written to `out`.
+    ///
+    /// Allocation-free: zeroes `out` and accumulates in place.
+    /// The accumulation order and per-edge expressions are exactly
+    /// those of the original allocating implementation, so the
+    /// result is bit-identical to [`Self::laplacian_apply`]
+    /// (pinned by test). `out` must not alias `s`.
+    ///
+    /// # Panics
+    /// Panics if `s.len() != self.n()` or `out.len() != self.n()`,
+    /// same contract as [`Self::energy`].
+    pub fn laplacian_apply_into(&self, s: &[f64], out: &mut [f64]) {
+        assert_eq!(s.len(), self.n);
+        assert_eq!(out.len(), self.n);
+        out.fill(0.0);
+        for &(i, j) in &self.edges {
+            out[i] += s[i] - s[j];
+            out[j] += s[j] - s[i];
+        }
+    }
+
     /// Apply the Laplacian: `(L s)_i = deg(i)·s_i − Σ_{j~i} s_j`.
+    ///
+    /// Allocating convenience wrapper over
+    /// [`Self::laplacian_apply_into`]; identical results.
     ///
     /// # Panics
     /// Panics if `s.len() != self.n()`, same contract as
     /// [`Self::energy`].
     pub fn laplacian_apply(&self, s: &[f64]) -> Vec<f64> {
-        assert_eq!(s.len(), self.n);
         let mut out = vec![0.0f64; self.n];
-        for &(i, j) in &self.edges {
-            out[i] += s[i] - s[j];
-            out[j] += s[j] - s[i];
-        }
+        self.laplacian_apply_into(s, &mut out);
         out
     }
 
@@ -133,9 +173,22 @@ impl SheafGraph {
     /// Panics if `s.len() != self.n()`, same contract as
     /// [`Self::energy`].
     pub fn smooth_step(&self, s: &mut [f64], alpha: f64) -> f64 {
+        let mut scratch = vec![0.0f64; self.n];
+        self.smooth_step_into(s, alpha, &mut scratch)
+    }
+
+    /// [`Self::smooth_step`] with caller-owned scratch for `L s`:
+    /// the allocation-free refine step. `scratch.len()` must equal
+    /// `self.n()`; its contents are overwritten. Bit-identical
+    /// arithmetic to `smooth_step` (same apply, same update order).
+    ///
+    /// # Panics
+    /// Panics if `s.len() != self.n()` or `scratch.len() != self.n()`.
+    pub fn smooth_step_into(&self, s: &mut [f64], alpha: f64, scratch: &mut [f64]) -> f64 {
+        assert_eq!(scratch.len(), self.n);
         let before = self.energy(s);
-        let ls = self.laplacian_apply(s);
-        for (v, g) in s.iter_mut().zip(ls.iter()) {
+        self.laplacian_apply_into(s, scratch);
+        for (v, g) in s.iter_mut().zip(scratch.iter()) {
             *v -= alpha * g;
         }
         before
@@ -221,6 +274,71 @@ mod tests {
     fn laplacian_of_constant_is_zero() {
         let g = SheafGraph::line(5);
         assert!(g.laplacian_apply(&[1.0; 5]).iter().all(|&v| v == 0.0));
+    }
+
+    /// Minimal seeded LCG (std-only) for the parity test below.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next_f64(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let m = (self.0 >> 11) as f64 / (1u64 << 53) as f64;
+            m * 20.0 - 10.0
+        }
+        fn coin(&mut self, p: f64) -> bool {
+            self.next_f64() + 10.0 < p * 20.0
+        }
+    }
+
+    #[test]
+    fn into_path_is_bitwise_identical_to_legacy() {
+        // The D11 fix must not change a single bit: same edge order,
+        // same per-edge expressions. Compare bit patterns, not
+        // tolerances, across seeded random graphs (incl. multigraph
+        // duplicates and empty edge sets).
+        for seed in 1..=60u64 {
+            let mut rng = Lcg(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let n = 2 + (seed as usize % 29);
+            let mut edges = Vec::new();
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    if rng.coin(0.25) {
+                        edges.push((i, j));
+                        if rng.coin(0.2) {
+                            edges.push((i, j)); // duplicate: multiplicity path
+                        }
+                    }
+                }
+            }
+            let g = SheafGraph::from_edges(n, edges);
+            let s: Vec<f64> = (0..n).map(|_| rng.next_f64()).collect();
+            let legacy = g.laplacian_apply(&s);
+            let mut into = vec![f64::NAN; n]; // poisoned: must be fully overwritten
+            g.laplacian_apply_into(&s, &mut into);
+            for i in 0..n {
+                assert_eq!(
+                    legacy[i].to_bits(),
+                    into[i].to_bits(),
+                    "seed {seed} node {i}: legacy {} vs into {}",
+                    legacy[i],
+                    into[i]
+                );
+            }
+            // smooth_step vs smooth_step_into: identical trajectory.
+            let mut a = s.clone();
+            let mut b = s.clone();
+            let mut scratch = vec![0.0f64; n];
+            for _ in 0..10 {
+                let ea = g.smooth_step(&mut a, 0.05);
+                let eb = g.smooth_step_into(&mut b, 0.05, &mut scratch);
+                assert_eq!(ea.to_bits(), eb.to_bits(), "seed {seed}: step energy bits");
+            }
+            for i in 0..n {
+                assert_eq!(a[i].to_bits(), b[i].to_bits(), "seed {seed}: smoothed bits");
+            }
+        }
     }
 
     #[test]

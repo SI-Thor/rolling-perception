@@ -56,9 +56,10 @@ From the **repository root**:
 
 ```sh
 cargo test --release
-# expect: 75 passed total — 6 (rolling-perception) + 32 (rolling-substrate-core:
-#         27 unit + 5 seeded property tests) + 12 (rolling-pipeline: 6 unit
-#         + 3 integration + 3 composition) + 6 (rolling-adaptive)
+# expect: 90 passed total — 6 (rolling-perception) + 47 (rolling-substrate-core:
+#         unit + seeded property tests + sheaf allocation proofs + the §3.2
+#         SPSC ring) + 12 (rolling-pipeline: 6 unit + 3 integration
+#         + 3 composition) + 6 (rolling-adaptive)
 #         + 8 (cuda-thor CPU: 3 reference + 5 property; its GPU tests need the
 #         Thor, see crates/cuda-thor)
 #         + 8 (harbor-watch, the wave-3 real-workload crate) + 3 (slice1/core: confluence-watch live service)
@@ -71,9 +72,9 @@ cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
 ```
 
 Scope, because the same words do different things in different folders:
-`cargo test` at the root tests **all** crates (75 tests); inside
+`cargo test` at the root tests **all** crates (90 tests); inside
 `crates/rolling-perception/` it tests 6; inside
-`crates/rolling-substrate-core/` it tests 32. `cargo run` needs
+`crates/rolling-substrate-core/` it tests 47. `cargo run` needs
 `-p rolling-perception` at the root (or run it from that crate's folder).
 
 ### CUDA experiments (Thor only)
