@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluence — Presence</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#101418; color:#e8ecef;
+         margin:0; display:flex; flex-direction:column; align-items:center;
+         min-height:100vh; padding:24px 16px; box-sizing:border-box; }
+  h1 { font-size:20px; font-weight:600; margin:4px 0 2px; }
+  .sub { color:#8a94a0; font-size:13px; margin-bottom:20px; text-align:center; }
+  #presence-live-indicator { display:flex; align-items:center; gap:10px;
+    font-size:17px; padding:10px 18px; border-radius:999px;
+    background:#1b2129; border:1px solid #2c3540; margin-bottom:22px; }
+  #dot { width:14px; height:14px; border-radius:50%; background:#5a6673; }
+  #dot.listening { background:#e5484d; animation:pulse 1s infinite; }
+  #dot.thinking  { background:#f5a524; animation:pulse .5s infinite; }
+  #dot.speaking  { background:#30a46c; animation:pulse .7s infinite; }
+  @keyframes pulse { 50% { opacity:.35; } }
+  #talk { width:150px; height:150px; border-radius:50%; border:none;
+    background:#2563eb; color:#fff; font-size:17px; cursor:pointer;
+    touch-action:none; user-select:none; -webkit-user-select:none; }
+  #talk.on { background:#e5484d; }
+  #mode { margin-top:12px; background:none; border:none; color:#8a94a0;
+    text-decoration:underline; cursor:pointer; font-size:13px; }
+  .card { width:min(560px,92vw); background:#161c23; border:1px solid #242d38;
+    border-radius:10px; padding:12px 14px; margin-top:16px; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em;
+    color:#8a94a0; margin:0 0 6px; }
+  .card p { margin:0; font-size:16px; line-height:1.45; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>Confluence</h1>
+  <div class="sub">The house system is at the table. This tab lends it your
+    microphone and speaker — nothing is listening until you hold the button.</div>
+
+  <div id="presence-live-indicator" aria-live="polite">
+    <span id="dot"></span><span id="state-label">Idle — not listening</span>
+  </div>
+
+  <button id="talk">Hold to talk</button>
+  <button id="mode">switch to tap-to-toggle</button>
+
+  <div class="card"><h2>You said</h2><p id="heard">—</p></div>
+  <div class="card"><h2>Confluence</h2><p id="reply">—</p></div>
+
+<script>
+const dot = document.getElementById('dot');
+const label = document.getElementById('state-label');
+const talkBtn = document.getElementById('talk');
+const modeBtn = document.getElementById('mode');
+let recorder = null, chunks = [], tapMode = false, recording = false;
+
+function setState(cls, text) { dot.className = cls; label.textContent = text; }
+
+async function startRec() {
+  if (recording) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    sendClip(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+  };
+  recorder.start();
+  recording = true;
+  talkBtn.classList.add('on');
+  talkBtn.textContent = tapMode ? 'Tap to stop' : 'Listening…';
+  setState('listening', '● LIVE — listening');
+}
+
+function stopRec() {
+  if (!recording || !recorder) return;
+  recording = false;
+  talkBtn.classList.remove('on');
+  talkBtn.textContent = tapMode ? 'Tap to talk' : 'Hold to talk';
+  setState('thinking', 'Thinking…');
+  recorder.stop();
+}
+
+async function sendClip(blob) {
+  const fd = new FormData();
+  fd.append('audio', blob, 'clip.webm');
+  try {
+    const r = await fetch('/hear', { method: 'POST', body: fd });
+    const data = await r.json();
+    document.getElementById('heard').textContent = data.transcript || '(nothing heard)';
+    document.getElementById('reply').textContent = data.reply_text || '';
+    if (data.reply_audio_b64) {
+      setState('speaking', 'Speaking…');
+      const audio = new Audio('data:audio/wav;base64,' + data.reply_audio_b64);
+      audio.onended = () => setState('', 'Idle — not listening');
+      audio.onerror = () => setState('', 'Idle — not listening');
+      await audio.play();
+    } else {
+      setState('', 'Idle — not listening');
+    }
+  } catch (e) {
+    document.getElementById('reply').textContent = 'Error: ' + e;
+    setState('', 'Idle — not listening');
+  }
+}
+
+talkBtn.addEventListener('pointerdown', e => { if (!tapMode) { e.preventDefault(); startRec(); } });
+talkBtn.addEventListener('pointerup',   () => { if (!tapMode) stopRec(); });
+talkBtn.addEventListener('pointerleave',() => { if (!tapMode) stopRec(); });
+talkBtn.addEventListener('click',      () => { if (tapMode) recording ? stopRec() : startRec(); });
+modeBtn.addEventListener('click', () => {
+  tapMode = !tapMode;
+  talkBtn.textContent = tapMode ? 'Tap to talk' : 'Hold to talk';
+  modeBtn.textContent = tapMode ? 'switch to hold-to-talk' : 'switch to tap-to-toggle';
+});
+</script>
+</body>
+</html>
