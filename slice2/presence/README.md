@@ -316,3 +316,33 @@ no app-v3 processes, no piper workers, stub file removed, the
 Slice-1 soak untouched and alive. (Port 8321 was re-taken after
 run 2 by the Slice-1 console's app.py — not this lane's
 process; identified read-only and left alone.)
+
+## From-the-chair acceptance — PERFORMED (2026-11-02)
+
+The Amendment-2 headline test, open since Slice 2 shipped, was
+performed by Casey in person: ProArt browser (Chrome) → the
+presence page served from the Thor → hold-to-talk conversation
+against the LIVE Slice-1 soak ledger (via the read-only rendered
+ledger view; the soak's files were never written).
+
+- Question (spoken): "What has changed in the last hour?"
+  Transcript exact. STT 436 ms, brain 2,620 ms, TTS 252 ms.
+- Reply grounded in real verdicts from that morning
+  ([proart-cam-114023] tiles 12 at 11:43 AM, plus two more
+  11:4x events — the homeowner's own activity at the desk);
+  grounding violation null, claim_violations [], reply_raw ==
+  reply (every fence passed it untouched). Audio returned to
+  the page. Receipt in the Thor play area (app-v3/receipts.jsonl,
+  ts 1793652288.8).
+- The road here is part of the record: the first attempt failed
+  silently because browsers deny getUserMedia on plain-http LAN
+  origins (secure-context rule). It worked only after the
+  insecure-origin flag was set in Casey's Chrome. PRODUCT
+  REQUIREMENT, now named: presence must ship a certificate
+  story (installer-issued local cert or equivalent) — a
+  household member cannot be asked to flip browser flags — and
+  the page must detect the insecure context and SAY so instead
+  of failing silently. Both are polish-backlog items.
+- Known wart visible in the performed reply: the 64-token cap
+  clipped the final sentence mid-phrase ("at 11:"). Brevity
+  enforcement stays, the cap/trim interplay needs a cleaner cut.

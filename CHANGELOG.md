@@ -6,6 +6,17 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — presence from-the-chair acceptance PERFORMED, 2026-11-02
+
+- The Amendment-2 headline test is closed: Casey held a spoken
+  conversation with the Thor through the ProArt's browser against
+  the live soak ledger; the reply grounded in that morning's real
+  verdicts passed every fence untouched (record:
+  slice2/presence/README.md). The path there named a product
+  requirement: browsers deny the mic on plain-http LAN origins —
+  presence must ship a certificate story, and the page must say
+  so instead of failing silently when the context is insecure.
+
 ## [Unreleased] — polish round: blockers worked, 2026-11-02
 
 From docs/audits/POLISH-BACKLOG.md (worked addenda recorded there):
