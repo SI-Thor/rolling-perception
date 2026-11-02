@@ -40,14 +40,32 @@ above −384 MiB — a wide backstop, because cuMemGetInfo pool noise on
 the shared Thor swings ~±150 MB (see the comment in
 `tests/spikes.rs`).
 
+## The generic kernel surface (2026-11-01, night)
+
+Beyond the spikes, the GPU module now carries the five additions
+rolling-pipeline's executor seam specified (its README's
+Composition section; ARCHITECTURE claim D13): public
+`gpu::compile` over the NVRTC path, `Module::load_named` for
+arbitrary kernel names, `Module::launch_args` taking typed
+`KernelArg` descriptors (encoding + launch-shape validation live
+in the lib, outside the feature gate, and are unit-tested
+anywhere), byte-level `DevBuf::upload_bytes` + async downloads,
+and `Gpu::new_stream` — an RAII second stream for the two-stream
+shadow. `tests/sheaf_stencil.rs` proves the surface end to end on
+the Thor: an f64 sheaf stencil (Laplacian apply + smooth step)
+compiled, loaded by name, launched on the second stream and
+compared against the CPU rule — Laplacian bit-exact, smooth step
+max err 1.388e-17 against a stated 1e-9 tolerance. Safety
+discipline and the full record: HARDENING.md, final section.
+
 ## Run it (on the Thor)
 
 ```sh
 export PATH=$HOME/.cargo/bin:/usr/local/cuda/bin:$PATH
-cargo test  # CPU parts, anywhere: 8 tests (3 unit + 5 randomised
+cargo test  # CPU parts, anywhere: 12 tests (7 unit + 5 randomised
             # property tests in tests/properties.rs); see HARDENING.md
-cargo test --release --features cuda-thor -- --ignored --nocapture  # GPU spikes
-cargo run  --release --features cuda-thor --bin spikes              # same, as a report
+cargo test --release --features cuda-thor -- --ignored --nocapture  # GPU spikes + stencil proof
+cargo run  --release --features cuda-thor --bin spikes              # the spikes, as a report
 ```
 
 Measured results: see `results/thor/2026-11-01-spike1-3.txt` at the

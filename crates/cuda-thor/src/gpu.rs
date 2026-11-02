@@ -15,7 +15,7 @@
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::time::{Duration, Instant};
 
-use crate::{max_abs_err, reference, test_input, Variant, TOL};
+use crate::{check_launch_dims, max_abs_err, reference, test_input, KernelArg, Variant, TOL};
 
 // ---------------------------------------------------------------- FFI types
 type CUresult = i32;
@@ -66,6 +66,7 @@ extern "C" {
         stream: CUstream,
     ) -> CUresult;
     fn cuStreamCreate(stream: *mut CUstream, flags: u32) -> CUresult;
+    fn cuStreamSynchronize(stream: CUstream) -> CUresult;
     #[link_name = "cuStreamDestroy_v2"]
     fn cuStreamDestroy(stream: CUstream) -> CUresult;
     fn cuModuleLoadData(module: *mut CUmodule, image: *const c_void) -> CUresult;
@@ -219,6 +220,23 @@ impl Gpu {
         self.stream
     }
 
+    /// Create an additional stream in this `Gpu`'s context — the
+    /// second stream of the two-stream shadow arrangement (the
+    /// `Gpu`'s own stream is the production stream). The returned
+    /// [`Stream`] is RAII: it is destroyed on drop, and must not
+    /// outlive `self` (its context).
+    pub fn new_stream(&self) -> Result<Stream, String> {
+        // SAFETY: the out-parameter points at a live local; the
+        // result is checked before the handle it produced is
+        // stored. The current context is this `Gpu`'s by
+        // construction (`Gpu::new` made it current on this thread).
+        unsafe {
+            let mut stream: CUstream = std::ptr::null_mut();
+            cu_check(cuStreamCreate(&mut stream, 0), "cuStreamCreate")?;
+            Ok(Stream(stream))
+        }
+    }
+
     /// `(free, total)` device memory in bytes, per `cuMemGetInfo`.
     pub fn mem_info(&self) -> Result<(usize, usize), String> {
         // SAFETY: both out-parameters point at live locals; the result
@@ -248,6 +266,44 @@ impl Drop for Gpu {
             let _ = cuStreamDestroy(self.stream);
             let _ = cuCtxSynchronize();
             let _ = cuDevicePrimaryCtxRelease(self.dev);
+        }
+    }
+}
+
+/// An additional stream in a [`Gpu`]'s context, created by
+/// [`Gpu::new_stream`] and destroyed on `Drop`. This is the handle
+/// the two-stream shadow needs: production work on the `Gpu`'s own
+/// stream, shadow/refine work on this one, independently
+/// synchronisable.
+pub struct Stream(CUstream);
+
+impl Stream {
+    /// The raw stream handle, for the FFI calls in this module that
+    /// take one ([`Module::launch`], [`Module::launch_args`],
+    /// [`Event::record`], [`DevBuf::download_async`]).
+    pub fn handle(&self) -> CUstream {
+        self.0
+    }
+
+    /// Block until this stream's queued work completes (the rest of
+    /// the context's streams are not waited on).
+    pub fn synchronize(&self) -> Result<(), String> {
+        // SAFETY: `self.0` is a live stream from `Gpu::new_stream`;
+        // the call takes the handle by value and writes nothing
+        // through it.
+        unsafe { cu_check(cuStreamSynchronize(self.0), "cuStreamSynchronize") }
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `cuStreamCreate` in
+        // `Gpu::new_stream` and is destroyed exactly once, here.
+        // `cuStreamDestroy` implicitly synchronises the stream
+        // first, so no queued work outlives the handle. Errors are
+        // ignored deliberately: there is no recovery during drop.
+        unsafe {
+            let _ = cuStreamDestroy(self.0);
         }
     }
 }
@@ -302,6 +358,125 @@ impl DevBuf {
     pub fn ptr(&self) -> CUdeviceptr {
         self.0
     }
+
+    /// The allocation's size in bytes, as passed to [`Self::new`].
+    pub fn byte_len(&self) -> usize {
+        self.1
+    }
+
+    /// Copy raw bytes into the allocation, synchronously — the
+    /// untyped sibling of [`Self::upload`], for data that is not
+    /// `f32` (an `f64` section, an `i32` edge list).
+    ///
+    /// Same hard length contract as `upload`, for the same reason:
+    /// `data.len()` must equal the buffer's byte size exactly. This
+    /// is a safe function; a debug-only check would let a short
+    /// slice through to `cuMemcpyHtoD` in release builds, which
+    /// would copy the buffer's full byte count out of a smaller
+    /// host allocation — an out-of-bounds read behind a safe
+    /// signature (HARDENING.md item 1 was exactly this bug).
+    pub fn upload_bytes(&self, data: &[u8]) -> Result<(), String> {
+        if data.len() != self.1 {
+            return Err(format!(
+                "upload_bytes length mismatch: {} B for a {} B device buffer",
+                data.len(),
+                self.1
+            ));
+        }
+        // SAFETY: `self.0` is a live allocation of `self.1` bytes,
+        // and the check above proves `data` is exactly `self.1`
+        // bytes, so the copy is in-bounds on both sides.
+        unsafe {
+            cu_check(
+                cuMemcpyHtoD(self.0, data.as_ptr() as *const c_void, self.1),
+                "cuMemcpyHtoD",
+            )
+        }
+    }
+
+    /// Queue an asynchronous copy of the allocation's first `bytes`
+    /// bytes into host memory at `dst`, on `stream`. The copy is
+    /// *queued*, not done: nothing at `dst` may be read until the
+    /// stream's work has completed (e.g. via [`Stream::synchronize`]
+    /// or [`Gpu::sync`]). For a checked destination owned by this
+    /// crate, prefer [`Self::download_to_pinned`].
+    ///
+    /// # Safety
+    /// `stream` must be a valid stream in the current context, and
+    /// `dst` must point to at least `bytes` writable host bytes that
+    /// stay valid and unaliased until the queued copy completes on
+    /// `stream`. `bytes` itself is checked against the device
+    /// allocation (an oversized request is an `Err`, not UB); the
+    /// host side cannot be checked, which is why this is an
+    /// `unsafe fn`.
+    pub unsafe fn download_async(
+        &self,
+        dst: *mut c_void,
+        bytes: usize,
+        stream: CUstream,
+    ) -> Result<(), String> {
+        if bytes > self.1 {
+            return Err(format!(
+                "download of {bytes} B exceeds the {} B device buffer",
+                self.1
+            ));
+        }
+        // SAFETY: `self.0` is a live allocation of `self.1` bytes
+        // and `bytes <= self.1` by the check above, so the device
+        // side is in-bounds; the host side and the stream are valid
+        // by the caller contract.
+        cu_check(
+            cuMemcpyDtoHAsync(dst, self.0, bytes, stream),
+            "cuMemcpyDtoHAsync",
+        )
+    }
+
+    /// Queue an asynchronous copy of this buffer into `dst` (a
+    /// pinned host allocation from this crate) on `stream`.
+    /// `dst`'s byte size must equal this buffer's, so the copy is
+    /// in-bounds on both sides by construction; the result at `dst`
+    /// may only be read after the stream's work completes.
+    ///
+    /// # Safety
+    /// `stream` must be a valid stream in the current context (e.g.
+    /// [`Gpu::stream`] or [`Stream::handle`]). The handle is the
+    /// one thing this function cannot validate, so — the
+    /// [`Event::record`] precedent — it is an `unsafe fn` rather
+    /// than a safe one with an unchecked pointer argument.
+    pub unsafe fn download_to_pinned(
+        &self,
+        dst: &PinnedBuf,
+        stream: CUstream,
+    ) -> Result<(), String> {
+        if dst.1 != self.1 {
+            return Err(format!(
+                "download_to_pinned size mismatch: device {} B, pinned host {} B",
+                self.1, dst.1
+            ));
+        }
+        // SAFETY: both allocations are live and exactly `self.1`
+        // bytes by the check above; `stream` is valid by the caller
+        // contract. (Borrowing `dst` as a shared ref while queueing
+        // a write into it is the pinned-buffer pattern the spikes
+        // already use: the write is performed by the driver, and the
+        // caller contract requires a stream synchronisation before
+        // any read through `dst`'s safe accessors.)
+        cu_check(
+            cuMemcpyDtoHAsync(dst.as_mut_ptr(), self.0, self.1, stream),
+            "cuMemcpyDtoHAsync",
+        )
+    }
+}
+
+impl KernelArg {
+    /// A [`KernelArg::DevPtr`] naming `buf`'s allocation — the
+    /// checked way to put a device buffer into a
+    /// [`Module::launch_args`] argument list (the raw-pointer
+    /// variant remains for pointers this crate did not allocate,
+    /// under `launch_args`' safety contract).
+    pub fn from_devbuf(buf: &DevBuf) -> KernelArg {
+        KernelArg::DevPtr(buf.ptr())
+    }
 }
 impl Drop for DevBuf {
     fn drop(&mut self) {
@@ -342,6 +517,24 @@ impl PinnedBuf {
         // fundamental type (certainly `f32`), and `self.1 / 4`
         // elements span at most `self.1` bytes.
         unsafe { std::slice::from_raw_parts(self.0 as *const f32, self.1 / 4) }
+    }
+
+    /// The allocation viewed as raw bytes (the full `bytes` from
+    /// [`Self::new`]). Same aliasing caveat as
+    /// [`Self::as_f32_slice`]: do not read through this view while a
+    /// queued async copy into the allocation is still in flight —
+    /// sequence copies and reads with a stream synchronisation, as
+    /// the spikes do.
+    pub fn as_bytes(&self) -> &[u8] {
+        // SAFETY: same argument as `as_f32_slice` (live allocation
+        // owned by `self`, so it outlives the borrow), and `u8`
+        // imposes no alignment requirement at all.
+        unsafe { std::slice::from_raw_parts(self.0 as *const u8, self.1) }
+    }
+
+    /// The allocation's size in bytes, as passed to [`Self::new`].
+    pub fn byte_len(&self) -> usize {
+        self.1
     }
 
     /// The raw pointer, for the async copy APIs.
@@ -513,6 +706,17 @@ fn nvrtc_compile(source: &str, arch_flag: &str, want_cubin: bool) -> Result<Comp
     }
 }
 
+/// Compile CUDA source at runtime via NVRTC — the public form of
+/// the spikes' private compile path (rolling-pipeline's executor
+/// seam needs to compile kernels other than the perceive filter).
+/// `arch_flag` is the `-arch=` value without the prefix, e.g.
+/// `"compute_110"` for PTX (what [`Module::load`] consumes) or
+/// `"sm_110"` with `want_cubin` for a native CUBIN. Compiler
+/// failures return the NVRTC log inside the error.
+pub fn compile(source: &str, arch_flag: &str, want_cubin: bool) -> Result<Compiled, String> {
+    nvrtc_compile(source, arch_flag, want_cubin)
+}
+
 /// The linked NVRTC's `(major, minor)` version.
 pub fn nvrtc_version() -> (i32, i32) {
     // SAFETY: both out-parameters point at live locals; a failed call
@@ -525,7 +729,54 @@ pub fn nvrtc_version() -> (i32, i32) {
 }
 
 // ------------------------------------------------------------------ modules
-/// A loaded module and its `perceive` function handle. There is no
+/// Owned storage for one [`KernelArg`] value during a
+/// [`Module::launch_args`] call: `cuLaunchKernel`'s argument array
+/// points at the *values*, so each descriptor is materialised into
+/// one of these and the pointer array is built from their fields
+/// once the storage vector is final.
+enum OwnedArg {
+    Ptr(CUdeviceptr),
+    F32(f32),
+    F64(f64),
+    I32(i32),
+    I64(i64),
+    U32(u32),
+    U64(u64),
+}
+
+impl From<&KernelArg> for OwnedArg {
+    fn from(arg: &KernelArg) -> OwnedArg {
+        match *arg {
+            KernelArg::DevPtr(p) => OwnedArg::Ptr(p),
+            KernelArg::F32(v) => OwnedArg::F32(v),
+            KernelArg::F64(v) => OwnedArg::F64(v),
+            KernelArg::I32(v) => OwnedArg::I32(v),
+            KernelArg::I64(v) => OwnedArg::I64(v),
+            KernelArg::U32(v) => OwnedArg::U32(v),
+            KernelArg::U64(v) => OwnedArg::U64(v),
+        }
+    }
+}
+
+impl OwnedArg {
+    /// A pointer to this value in the exact form `cuLaunchKernel`
+    /// wants one element of its argument array to be.
+    fn as_mut_ptr(&mut self) -> *mut c_void {
+        match self {
+            OwnedArg::Ptr(v) => v as *mut CUdeviceptr as *mut c_void,
+            OwnedArg::F32(v) => v as *mut f32 as *mut c_void,
+            OwnedArg::F64(v) => v as *mut f64 as *mut c_void,
+            OwnedArg::I32(v) => v as *mut i32 as *mut c_void,
+            OwnedArg::I64(v) => v as *mut i64 as *mut c_void,
+            OwnedArg::U32(v) => v as *mut u32 as *mut c_void,
+            OwnedArg::U64(v) => v as *mut u64 as *mut c_void,
+        }
+    }
+}
+
+/// A loaded module and one resolved function handle in it
+/// (`perceive` via [`Module::load`], any kernel via
+/// [`Module::load_named`]). There is no
 /// `Drop` impl on purpose: unloading is an explicit, error-returning
 /// act ([`Module::unload`], consuming) because spike 3's retirement
 /// rule needs to *know* when an unload happened relative to its
@@ -540,9 +791,19 @@ pub struct Module {
 
 impl Module {
     /// Load a PTX or CUBIN image and resolve its `perceive` kernel.
+    /// Equivalent to [`Self::load_named`] with `"perceive"`.
     pub fn load(image: &[u8]) -> Result<Module, String> {
+        Self::load_named(image, "perceive")
+    }
+
+    /// Load a PTX or CUBIN image and resolve the kernel named
+    /// `kernel_name` in it — the general form of [`Self::load`],
+    /// for kernels other than the spikes' `perceive`. A missing
+    /// kernel name is an `Err` (and the just-loaded module is
+    /// unloaded before returning, so the error path leaks nothing).
+    pub fn load_named(image: &[u8], kernel_name: &str) -> Result<Module, String> {
         // No unwrap on the kernel name either (see `cstring`).
-        let fname = cstring("perceive", "kernel name")?;
+        let fname = cstring(kernel_name, "kernel name")?;
         // SAFETY: the out-parameters point at live locals; `image`
         // outlives the load call; if function resolution fails the
         // just-loaded module is unloaded before returning, so no
@@ -643,6 +904,63 @@ impl Module {
                 0,
                 stream,
                 args.as_mut_ptr(),
+                std::ptr::null_mut(),
+            ),
+            "cuLaunchKernel",
+        )
+    }
+
+    /// Launch this module's kernel with a typed argument list — the
+    /// generic form of [`Self::launch`], for kernels whose signature
+    /// is not the perceive triple. `args` describes the kernel's
+    /// parameters in order; the launch shape is validated before
+    /// any FFI ([`crate::check_launch_dims`]).
+    ///
+    /// What this function cannot check, the caller must guarantee —
+    /// which is why it is an `unsafe fn`: that the argument count,
+    /// order and types match the kernel's actual signature (a
+    /// mismatch is device-side UB the driver cannot detect), and
+    /// that every [`KernelArg::DevPtr`] names a live device
+    /// allocation large enough for the kernel's accesses.
+    ///
+    /// # Safety
+    /// `stream` must be a valid stream in the current context (e.g.
+    /// [`Gpu::stream`] or [`Stream::handle`]); this module must not
+    /// be unloaded until the launched work has completed on that
+    /// stream; and the two argument guarantees in the paragraph
+    /// above hold.
+    pub unsafe fn launch_args(
+        &self,
+        stream: CUstream,
+        args: &[KernelArg],
+        grid: (u32, u32, u32),
+        block: (u32, u32, u32),
+    ) -> Result<(), String> {
+        check_launch_dims(grid, block)?;
+        // Materialise the owned argument values FIRST, then build
+        // the pointer array: pointers into a `Vec` are only taken
+        // once the vector is final, so none can be invalidated by a
+        // reallocation, and both vectors outlive the (synchronous,
+        // enqueue-only) driver call, which copies the values.
+        let mut storage: Vec<OwnedArg> = args.iter().map(OwnedArg::from).collect();
+        let mut ptrs: Vec<*mut c_void> = storage.iter_mut().map(OwnedArg::as_mut_ptr).collect();
+        // SAFETY: `self.func` is a live function handle from
+        // `Module::load`/`load_named`; the argument array points at
+        // the owned values in `storage`, which outlive the call;
+        // `stream` and the argument guarantees are the caller's
+        // contract above.
+        cu_check(
+            cuLaunchKernel(
+                self.func,
+                grid.0,
+                grid.1,
+                grid.2,
+                block.0,
+                block.1,
+                block.2,
+                0,
+                stream,
+                ptrs.as_mut_ptr(),
                 std::ptr::null_mut(),
             ),
             "cuLaunchKernel",

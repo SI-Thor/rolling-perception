@@ -3,9 +3,10 @@
 The low-level engine of rolling-perception / Confluence, documented
 against the code as it stands today. Every structural claim below was
 checked against the tree (sources read, `cargo tree` run,
-`cargo test --workspace` run: **90 passed, 0 failed** on the dev VM
-(recounted per-package at the round-2 assembly; this book's first
-edition said 55, its second 75 — both predated the lanes that followed),
+`cargo test --workspace` run: **95 passed, 0 failed** on the dev VM
+(recounted per-package at the round-3 assembly; this book's first
+edition said 55, its second 75, its third 90 — each predated the
+lanes that followed it; trust the current README arithmetic),
 2026-11-01). Where the founding documents (`PLAN.md`, `DESIGN.md`)
 and the code disagree, this book sides with the code and says so —
 §4 collects the divergences.
@@ -127,18 +128,18 @@ it in load-bearing places. This table is the honest reconciliation.
 
 | # | claim (DESIGN §) | what the code actually is | proof / gap | status |
 |---|---|---|---|---|
-| D1 | Ring protocol is **SPSC per lane**: per-slot sequence states, consumer acquire/release (§3.2, INV-R1–R3) | **Multi-producer Disruptor claim/finalize**: producers `fetch_add` a global claim, spin for the slot's lap, publish with `sequence = claim + capacity` (Release); consumers *poll* `is_published` and read via `unsafe read_published` — there is no consumer protocol object (`substrate.rs`) | `multi_producer_claims_are_unique_and_all_publish` proves the built protocol's claim safety; nothing pins the §3.2 protocol because it was never built | **UNPROVEN — superseded**: §3.2 does not describe the shipped ring. The crate's own docs (`substrate.rs`, `lib.rs`) describe the built protocol correctly; DESIGN.md was never updated |
+| D1 | Ring protocol is **SPSC per lane**: per-slot sequence states, consumer acquire/release (§3.2, INV-R1–R3) | **Multi-producer Disruptor claim/finalize**: producers `fetch_add` a global claim, spin for the slot's lap, publish with `sequence = claim + capacity` (Release); consumers *poll* `is_published` and read via `unsafe read_published` — there is no consumer protocol object (`substrate.rs`) | `multi_producer_claims_are_unique_and_all_publish` proves the built protocol's claim safety; round 2 then built the §3.2 protocol as `SpscRing` and pinned it (`tests/spsc_properties.rs`) | **RESOLVED by Amendment A (2026-11-01)**: as first written this row read "§3.2 does not describe the shipped ring; DESIGN.md was never updated". Both halves have since been fixed by measurement, not editing alone: the designed SPSC ring exists and out-benchmarks the Disruptor (D12), and DESIGN §3.2 now describes both rings and their placements |
 | D2 | `SlotHeader` is exactly one 64-byte cache line with the specified field layout; full `Lineage` rides at the payload head behind a `lineage_version` (§3.1, §5) | `Slot` is `#[repr(align(64))]`, size a multiple of 64 (asserted); lineage lives **inside the slot** as an atomics-based `LineageHeader`; payload is a `Box<[f32]>` field of the slot | `slots_are_64_byte_aligned_and_padded` pins alignment/size only | **partial** |
 | D3 | Conservation: `produced == consumed + dropped + in_flight`, asserted at shutdown (INV-R4, §3.4) | No such accounting exists anywhere in the ring | — | **UNPROVEN** |
-| D4 | Backpressure policies Block / DropNewest / DropOldest chosen per ring (§3.4) | Block-by-spin only (see P12) | — | **UNPROVEN** (not implemented) |
+| D4 | Backpressure policies Block / DropNewest / DropOldest chosen per ring (§3.4) | Block-by-spin only in the Disruptor (see P12); `SpscRing` implements all three policies per the amended §3.4 (DropNewest via the gap signal — the original text was unimplementable, RING-BENCH A1) | `tests/spsc_properties.rs` (policy tests vs a naive model) | **PARTIAL — proven for SpscRing; the Disruptor remains Block-only by design placement (Amendment A)** |
 | D5 | INV-S1: energy ≥ 0 for all s | Structural (sum of squared edge differences, computed in f64) + fixed-point/zero-energy tests | `consistent_input_has_zero_energy_and_is_fixed_point`, `clamp_counterexample_is_caught` | **proven** (for the scalar-section form built; see D8) |
 | D6 | INV-S2: a valid-α step never increases energy | Proven on the built graphs; pipeline re-asserts it per payload at runtime (`stage_refine` panics on an increase) | sheaf tests + harbor `sheaf_energy_never_increases` | **proven** |
 | D7 | INV-S3: the averaging form preserves the per-component mean; docs must not claim it for the gradient form | The built step *is* the gradient form — and on the ring graph it preserves the mean anyway (1ᵀL = 0), which the test pins | `smoothing_preserves_mean_on_ring` | **proven**, with the note that the invariant holds for a reason DESIGN assigns to the other form |
 | D8 | Sections are f32 blocks with per-edge overlap coordinate sets; incidence applied via CSR (§4) | Built form is narrower: **one f64 scalar per graph node**, edge list (not CSR), whole-"section" differences only | sheaf.rs module docs state this scope honestly | **partial** — the consensus special case, exactly as PLAN §5.3 scoped it; DESIGN §4's richer structure was not built |
 | D9 | INV-S4: NaN in a section ⇒ energy NaN *and the step refuses* with `SheafError::NonFinite` (§4, F6) | No error type, no finiteness check: `smooth_step` propagates NaN silently | — | **UNPROVEN** |
 | D10 | α validated at construction, `0 < α ≤ 2/λmax` via power-iteration `spectral_bound`; out-of-range α is an error (§4) | No validation and no `spectral_bound` function; α is a bare caller-supplied `f64` (call sites use 0.1 with the bound argued in comments) | — | **UNPROVEN** |
-| D11 | The sheaf step allocates nothing (pre-allocated scratch) (§4) | `laplacian_apply_into` + counting-allocator test (0 allocations steady-state, bitwise parity with the legacy path) | `sheaf.rs`, `tests/sheaf_alloc.rs` | **PROVEN** (2026-11-01 night, SHEAF-FIX: was "contradicted by the code" in this book's first edition; the legacy signature delegates to the into-path) |
-| D12 | DESIGN §3.2's SPSC ring is the engine's queue centre (§3.2) | `SpscRing` built as written; head-to-head in docs/RING-BENCH.md: SPSC faster (6.7–11.4 vs 2.6–5.6 M msgs/s) **and the shipped Disruptor, consumed as a queue, tore 5–27% of reads silently in every run** (no consumer release/counters) | `spsc.rs`, `tests/spsc_properties.rs`, RING-BENCH.md | **PARTIAL — verdict "both, placed differently"**: SPSC takes per-lane cascade queues; the Disruptor keeps multi-producer junctions + latest-value points; the shipped ring used as a paced queue is REFUTED and must not survive. §3.4's DropNewest is unimplementable as written (ambiguity A1, repaired via a gap signal) — DESIGN needs amendment |
+| D11 | The sheaf step allocates nothing (pre-allocated scratch) (§4) | `laplacian_apply_into` + counting-allocator test (0 allocations steady-state, bitwise parity with the legacy path) | `sheaf.rs`, `tests/sheaf_alloc.rs` | **PROVEN** (2026-11-01 night, SHEAF-FIX: was "contradicted by the code" in this book's first edition; the legacy signature delegates to the into-path; DESIGN §4 now carries an Amendment A note pointing at this proof, so §4's text stands unamended) |
+| D12 | DESIGN §3.2's SPSC ring is the engine's queue centre (§3.2) | `SpscRing` built as written; head-to-head in docs/RING-BENCH.md: SPSC faster (6.7–11.4 vs 2.6–5.6 M msgs/s) **and the shipped Disruptor, consumed as a queue, tore 5–27% of reads silently in every run** (no consumer release/counters) | `spsc.rs`, `tests/spsc_properties.rs`, RING-BENCH.md | **PROVEN as amended** (2026-11-01, DESIGN Amendment A — drafted from the RING-BENCH measurement, Casey's approval on record): DESIGN §3.2/§3.4 now state the measured placement — SPSC takes per-lane cascade queues (backpressure + INV-R4 accounting); the Disruptor keeps multi-producer junctions + latest-value points; the shipped ring used as a paced queue is REFUTED and must not survive — with the original §3.2/§3.4 text preserved in DESIGN.md as superseded history, and §3.4's DropNewest corrected per ambiguity A1 (gap signal + consumer release-on-skip). Design and code now describe the same system |
 | D13 | A GPU executor can fill the pipeline's executor seam (connect round) | cuda-thor's public API cannot compile/load/launch any kernel but the hardcoded `perceive` (5 named gaps, gpu.rs); the executor refuses typed (`GpuApiGap`) and Thor-verified the refusal on real hardware; CPU bar measured (0.268 µs @ 64 nodes) + launch pickup 1.1 µs ⇒ GPU refine cannot win below ~4,096 nodes regardless | `rolling-pipeline` README (Composition), executor.rs | **UNPROVEN — blocked on specified cuda-thor API additions; low-stakes at current scales by measurement** |
 | D12 | INV-G1/G2: gated output inside == ungated; outside never modified (§7.4) | `gating.rs::gated_apply` | `gated_result_identical_on_roi_and_untouched_outside` (also asserts `f` is never *called* outside) | **proven** |
 | D13 | INV-D2: gate churn bounded by deadband (**band + yaw**: challenger must win for `yaw_ticks` consecutive ticks) (§6, §7.4) | `Director` implements the band (deadband + max-step) but **no yaw counter** — it moves on the first out-of-band tick; churn is counted (moves/holds) but no oscillating-input churn test exists | `director_deadband_holds_and_steps` (band half) | **partial** |
@@ -278,9 +279,12 @@ autopsy in its §3.3 is still the best explanation of why the ring
 looks the way it does), but **do not read it as a description of
 the built system** in these places:
 
-1. **The ring protocol (DESIGN §3.2)**: SPSC was designed; a
-   multi-producer Disruptor claim ring was built (D1). The built
-   protocol's spec is the module doc in `substrate.rs`.
+1. **The ring protocol (DESIGN §3.2)**: *resolved by Amendment A.*
+   SPSC was designed; a multi-producer Disruptor claim ring was
+   built first (D1). Round 2 built the designed SPSC ring, benched
+   the two head-to-head (D12, RING-BENCH.md), and §3.2 now
+   describes both rings and their placements, with the original
+   text preserved as superseded history.
 2. **The module layout (DESIGN §1)**: one crate with 14 modules was
    designed; a 7-member workspace was built. `clock.rs`, `slot.rs`,
    `ring.rs`, `node.rs`, `workloads.rs`, `scheduler.rs`,
@@ -296,7 +300,12 @@ the built system** in these places:
    (P9/D2).
 4. **Backpressure & conservation (DESIGN §3.4)**: designed in full,
    built as block-only spin with no accounting (D3/D4).
+   *Partially resolved by Amendment A*: `SpscRing` carries all
+   three policies and INV-R4 accounting; §3.4's amended text
+   records that its original DropNewest was unimplementable as
+   written. The Disruptor remains Block-only, by placement.
 
 None of these divergences is hidden in the code — the crate docs
-describe what was actually built, usually well. The debt is that
-DESIGN.md itself was never revised, which this book now records.
+describe what was actually built, usually well. The remaining
+debt is items 2–3 above (layout and types), still unamended
+because no measurement has yet forced the question.

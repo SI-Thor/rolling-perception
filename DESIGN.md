@@ -143,6 +143,52 @@ fixed by a `const` size assertion test: `size_of::<SlotHeader>() == 64`):
 
 ### 3.2 Sequence protocol (per slot, SPSC)
 
+> **Amendment A (2026-11-01) — drafted from measurement, Casey's
+> approval on record in the build chat.** Evidence:
+> `docs/RING-BENCH.md` (the §3.2 ring implemented as written in
+> `crates/rolling-substrate-core/src/spsc.rs`, property-tested, and
+> benched head-to-head against the shipped ring); status tracked as
+> claim D12 in `docs/ARCHITECTURE.md`.
+>
+> **The engine has two rings, in two placements:**
+>
+> 1. **Per-lane cascade queues — `SpscRing`, the protocol specified
+>    below.** Each lane has exactly one producer by construction
+>    (§0.2's premise, still true), and on those links the consumer is
+>    a protocol party: its release store *creates* the producer's
+>    next claim right, so a slow stage gets **backpressure instead
+>    of silent data loss**, and the ring carries the INV-R4
+>    conservation accounting of §3.4
+>    (`produced == consumed + dropped_newest + dropped_oldest +
+>    in_flight`, exposed via `RingStats`, asserted at drain in tests
+>    for all three drop policies). Measured on the pipeline's
+>    message pattern (`[f32; 8]`, 1M messages, two threads,
+>    RING-BENCH §4): throughput **6.65–11.37 M msgs/s** across four
+>    pairings vs the shipped ring's 2.59–5.55; ping-pong median
+>    **0.35 / 0.82 µs** vs 1.47 / 1.58 µs.
+> 2. **Genuine multi-producer junctions and latest-value publish
+>    points — the shipped Disruptor claim/finalize ring**
+>    (`substrate.rs`). Several producers finalizing into one buffer
+>    via a `fetch_add` claim is the one capability SPSC refuses, and
+>    at a latest-value point an overwritten sample is the *intended*
+>    behaviour, not a loss. There its costs (atomic claim, no
+>    consumer accounting) buy the right thing.
+>
+> **Refuted placement:** the shipped Disruptor ring consumed as a
+> paced queue. It has no consumer release, no drop policy, and no
+> counters; benched the only way its API allows (poll
+> `is_published`, then read), it **tore 5.2–27.4% of 1M reads
+> silently in every run** (52k–274k reads). That use does not
+> survive this amendment; a call site that polls `is_published`
+> from another thread is to be treated the way this repo treats a
+> failed test.
+>
+> §3.4's drop policies required two repairs this section never
+> stated (RING-BENCH ambiguities A1/A2); they are recorded in
+> Amendment A at §3.4. The original §3.2 text follows verbatim.
+
+#### Original §3.2 (superseded — preserved verbatim)
+
 One producer thread and one consumer thread per ring in v0.1. Each slot cycles
 through generations. Slot `i` has a protocol counter `sequence` with this
 meaning (a simplified, SPSC-specialised descendant of the Disruptor/Vyukov
@@ -210,6 +256,51 @@ any code, and §7 ties each invariant to its test.
 
 ### 3.4 Backpressure policy (per ring, chosen at construction)
 
+> **Amendment A (2026-11-01) — drafted from measurement, Casey's
+> approval on record in the build chat.** Evidence and full
+> ambiguity log: `docs/RING-BENCH.md` §2 (A1–A5). The policies below
+> are `SpscRing`'s, as built and property-tested; the shipped
+> Disruptor ring has no drop policies and no counters (§3.2
+> Amendment A), so the INV-R4 invariant stated under the original
+> table holds for `SpscRing` and is asserted at drain in its tests
+> for all three policies.
+>
+> - **`DropNewest` as originally written is unimplementable**
+>   (A1). A dropped generation is never published *and never
+>   released*, so the slot's free-value for generation
+>   `m + capacity` is a number no party ever stores — one drop
+>   wedges the ring permanently. **Shipped semantics:** (a) a
+>   producer-head gap signal — the producer publishes its next
+>   counter in a ring-level `producer_head` atomic, stored
+>   `Release` *after* the publish or drop it describes and read
+>   `Acquire` only for gap detection, never for payload
+>   synchronisation, which remains solely the slot sequence's job
+>   as §3.2 demands; (b) consumer release-on-skip — a consumer
+>   skipping a dropped generation performs that generation's
+>   release store (`m + capacity`). Proven against a naive queue
+>   model under random schedules (400 messages; counters meet
+>   exactly at drain; sends succeed after a gap — the wedge case).
+> - **`DropOldest` is a policy override of §3.2's claim
+>   precondition** (A2): the producer reclaims when
+>   `sequence[i] == n − capacity + 1` (published, unread),
+>   destroying the stale payload in place. **Caveat:** a consumer
+>   caught mid-copy by a reclaim revalidates the slot sequence
+>   after copying and discards a torn copy (counted as
+>   `dropped_oldest`); a formally race-free treatment would need
+>   a consumer-progress signal §3.2 does not provide, and that gap
+>   is stated, not papered over. Threaded property tests exercise
+>   `Block` (the policy INV-R2/R3 are stated under); `DropOldest`
+>   is verified against the naive model single-threaded and under
+>   random schedules.
+> - **`Block`** (A3): "park" names no primitive in the original.
+>   Shipped form is spin (`spin_loop`) escalating to `yield_now`,
+>   no park; the `blocked_ns` accounting in the table is
+>   implemented as specified.
+>
+> The original §3.4 follows verbatim.
+
+#### Original §3.4 (superseded — preserved verbatim)
+
 | Policy | Producer behaviour when the target slot is not free | Accounting |
 |---|---|---|
 | `Block` | Spin-with-backoff, then park (bench mode: spin only, and say so) | `blocked_ns` total recorded |
@@ -245,6 +336,7 @@ A policy that loses silently does not get added.
   - `step(s, alpha, scratch)`: $s \leftarrow s - \alpha L s$ computed as
     $s - \alpha D^{T}(Ds)$ using a pre-allocated edge scratch buffer; no
     allocation (asserted by a counting-allocator test in debug builds).
+  - **Amendment A note (2026-11-01):** the no-allocation property above was contradicted by the first build (`laplacian_apply` allocated a fresh `Vec` per call); it is now **proven** — `laplacian_apply_into` writes into a pre-allocated output with zero allocations in steady state, asserted by the counting-allocator test `crates/rolling-substrate-core/tests/sheaf_alloc.rs` with bitwise parity against the legacy path (`docs/ARCHITECTURE.md`, claim D11).
   - `spectral_bound(graph) -> f64`: power iteration on $L$ at setup (fixed
     iteration count, recorded); step sizes are validated `0 < alpha <= 2/lambda`
     and construction with an out-of-range `alpha` is an error, not a clamp.

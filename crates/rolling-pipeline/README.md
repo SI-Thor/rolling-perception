@@ -16,24 +16,27 @@ producer ─ring─▶ perceive ─ring─▶ decide ─ring─▶ direct ─rin
 
 ## How it works
 
-- **Data travels in rings, not calls.** One `FluidSubstrateBuffer`
-  (substrate-core) per stage edge, capacity 8, payload = one 8×8 f32
-  grid per slot. Every stage is the same skeleton (`handoff` in
-  `src/lib.rs`): wait for the input claim to be published, copy it
-  into a fresh output lease, replay lineage, record itself, work,
-  finalize. Ticks are strictly sequential, which is what makes the
-  substrate's `read_published` safety precondition hold here (stated
-  at the call site).
-- **Lineage accumulates across edges.** Slot headers are cleared when
-  a slot is re-leased, so lineage could not accumulate if it only
-  lived in headers. Each stage therefore captures a `LineageSnapshot`
-  (visited bitmask + per-stage counts — plain values) and the next
-  stage replays those counts into its output header before recording
-  itself. The published payload's header genuinely shows every stage,
+- **Data travels in rings, not calls.** One ring per stage edge,
+  capacity 8, payload = one 8×8 f32 grid per message. Five edges are
+  substrate-core `SpscRing`s; the last (`publish → world`) is a
+  `FluidSubstrateBuffer` publish point — see **Ring placement**
+  below for the audit behind the split. Every stage is the same
+  skeleton (`src/lib.rs`): receive the one in-flight payload from
+  its input lane, advance its lineage, work, send it down the
+  output lane. Ticks are strictly sequential.
+- **Lineage accumulates across edges.** On the SPSC edges the
+  payload itself carries a `LineageSnapshot` (visited bitmask +
+  per-stage counts — plain values); each stage advances it by its
+  own visit before handing the payload on. On the final Disruptor
+  edge the snapshot is replayed into the slot header (headers are
+  cleared when a slot is re-leased, so the replay is what the
+  header shows) and the completed lineage is captured back out.
+  Either way the published payload genuinely shows every stage,
   exactly once: `perceive:1 decide:1 direct:1 refine:1 publish:1`,
-  mask `11111`. A small control record (`TickMeta`) carries the
-  snapshot relay and decide's signal summary alongside the rings —
-  control state, not payload data, and labelled as such.
+  mask `11111`. A small control record (`TickMeta`) carries
+  decide's signal summary alongside the rings, with the lineage
+  snapshot mirrored into it as stages advance — control state, not
+  payload data, and labelled as such.
 - **Director with deadband + hysteresis.** `decide` computes the
   |value|-weighted centroid of the payload. `direct` rounds it to a
   target cell; if the target is within the deadband (1 cell, Chebyshev)
@@ -50,6 +53,64 @@ producer ─ring─▶ perceive ─ring─▶ decide ─ring─▶ direct ─rin
   The demo reports `perceive gated / ungated baseline` from counters
   first (full frame = 64/payload, director gate = 16/payload); wall
   times appear afterwards and are never the proof.
+
+## Ring placement (the D12 audit)
+
+ARCHITECTURE claim D12, settled by `docs/RING-BENCH.md`: the
+shipped Disruptor ring, consumed as a queue (poll `is_published` +
+`read_published` — the only consumer its API offers), **tore
+5–27% of a million reads silently** — it has no consumer release,
+no drop policy, no counters. The §3.2 `SpscRing` is faster *and*
+accounts for every message (INV-R4). So: **SPSC takes every
+per-lane cascade queue; the Disruptor keeps only genuine
+multi-producer junctions and latest-value publish points.**
+
+This crate's topology, audited from the code (every edge is driven
+by exactly one stage on each side; ticks are sequential):
+
+| edge | producers | consumers | semantics | placement |
+|---|---|---|---|---|
+| producer → perceive (`in`) | 1 (the tick caller) | 1 (`perceive`) | ordered queue, exactly-once | **SpscRing** |
+| perceive → decide (`perceived`) | 1 | 1 (`decide`) | ordered queue, exactly-once | **SpscRing** |
+| decide → direct (`decided`) | 1 | 1 (`direct`) | ordered queue, exactly-once | **SpscRing** |
+| direct → refine (`directed`) | 1 | 1 (`refine`) | ordered queue, exactly-once | **SpscRing** |
+| refine → publish (`refined`) | 1 | 1 (`publish`) | ordered queue, exactly-once | **SpscRing** |
+| publish → world (`ring_out`) | 1 | **0** (no queue consumer) | latest-value publish point | **Disruptor (kept)** |
+
+`ring_out` qualifies under D12's second clause: `publish` returns
+the payload to the caller directly as `Published`; the ring is a
+finalized publish surface whose slot header carries the completed
+lineage, and nothing anywhere calls `is_published` /
+`read_published` on it — the torn-read failure mode needs a queue
+consumer, and there is none. There are no multi-producer junctions
+in this cascade today; if one ever appears (e.g. several perceive
+lanes feeding one decide), *that junction* is where a Disruptor
+belongs, not the lanes feeding it.
+
+The migrated edges run `Policy::Block`: the sequential cascade
+never actually blocks (each lane holds at most one in-flight
+payload), and Block is the policy whose semantics — nothing is
+ever lost — the cascade was written against. A lost message is
+now loud anyway: a stage receiving from an empty lane panics
+naming the tick and edge, where the Disruptor would have handed
+back a torn or stale slot.
+
+Two consequences worth knowing:
+
+- **Lineage moved into the payload.** SPSC slots have no header,
+  so the snapshot rides inside the message (see *How it works*);
+  the values are bit-for-bit the ones the header dance produced.
+- **Conservation is now checkable.** `Pipeline::edge_stats()`
+  exposes each migrated edge's INV-R4 counters. The proof lives in
+  `tests/ring_stress.rs`: two pipelines in lockstep over 250,000
+  payloads must agree bitwise on every checksum and payload
+  element, then one continues to 1,000,000 messages (125,000 wraps
+  of every ring), after which every edge must read
+  `produced == consumed == 1,000,000` with zero drops — the test
+  the old ring could not have passed, or even reported on. A side
+  effect of dropping the per-handoff `Vec` copies: a tick costs
+  ~2.1 µs (release, dev VM) against ~2.7 µs before the migration,
+  with checksums bit-identical across the change.
 
 ## Schedulers
 
@@ -210,7 +271,9 @@ director's moves and deadband holds are both exercised.
 ## What this does not claim
 
 Single-threaded CPU cascade. The rings are the substrate's real
-multi-producer rings, but this crate drives them sequentially — the
-concurrency claim belongs to substrate-core's own tests, and the GPU
-claims belong to the Thor experiments. Nothing here sleeps *as*
-compute, mocks a kernel, or reports a simulated number as measured.
+rings (five §3.2 SPSC queues, one Disruptor publish point), but
+this crate drives them sequentially — the concurrency claim
+belongs to substrate-core's own tests (including the SPSC ring's
+two-thread property test), and the GPU claims belong to the Thor
+experiments. Nothing here sleeps *as* compute, mocks a kernel, or
+reports a simulated number as measured.

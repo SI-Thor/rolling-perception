@@ -61,7 +61,7 @@ its test or marked unproven, and the per-crate invariants ledger.
   state beats held samples 8–18× for late readers; snap rule v2
   with a decontaminated band).
 
-## Crates (the engine, 90 workspace tests)
+## Crates (the engine, 95 workspace tests)
 
 | crate | what it is |
 |---|---|

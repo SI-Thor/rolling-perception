@@ -6,6 +6,32 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — round 3: migration, the GPU API, and DESIGN amended, 2026-11-01 (night)
+
+- **Cascade migrated to SpscRing**: all five inter-stage edges of
+  rolling-pipeline are 1-producer/1-consumer queues and now run on
+  `SpscRing` (Block); `ring_out` has zero consumers and stays a
+  Disruptor latest-value publish point, cited in code. The proof
+  the old ring could not pass: **1,000,000 messages, 125,000 wraps
+  per ring, produced == consumed == 1,000,000, zero drops**; the
+  20,100-tick bench checksum is bit-identical pre/post and the
+  tick got faster (~2.7 → ~2.1 µs).
+- **cuda-thor's generic surface shipped**: public `compile`,
+  `Module::load_named`, typed `KernelArg` launch (`launch_args`),
+  byte-level upload + async/pinned downloads, `Gpu::new_stream()`.
+  Thor proof through the new API only: an f64 sheaf stencil,
+  **Laplacian bit-exact (max err 0.0)**, smooth step 1.4e-17,
+  launched on the second stream. ARCHITECTURE D13's five gaps are
+  closed; filling the pipeline's GPU executor is now possible —
+  and still bounded by the crossover math (no win below ~4,096
+  nodes), so it remains unbuilt by choice, not by blockage.
+- **DESIGN.md Amendment A**: §3.2/§3.4 rewritten to the measured
+  record (both rings placed; DropNewest's original text recorded
+  as unimplementable and repaired), originals preserved verbatim
+  as superseded history; §4 gains the D11 proof note. ARCHITECTURE
+  D1 resolved, D4 partial→proven-for-SPSC, §5 refreshed.
+- Workspace tests 90 → **95**.
+
 ## [Unreleased] — round 2: the book's findings, settled, 2026-11-01 (night)
 
 ### Measured

@@ -121,3 +121,70 @@ assertion message.
   spike 3's stale-module detection rests on this.
 - `max_abs_err`: zero on identical inputs, symmetric, constant-offset
   exact, triangle bound.
+
+## 2026-11-01 (night) — the generic kernel surface (CUDA-API lane)
+
+The five additions rolling-pipeline's executor seam specified
+(its README, Composition; ARCHITECTURE claim D13), implemented
+under the discipline above — no new `unwrap`/`expect` on a
+reachable path, every `unsafe fn` carrying a `# Safety` contract,
+every `unsafe` block a `// SAFETY:` comment, clippy
+`--all-targets -D warnings` and `missing_docs` clean in **both**
+feature configurations, `cargo fmt` applied.
+
+1. **`gpu::compile`** — the private `nvrtc_compile`, made public
+   unchanged (`Compiled` was already a public struct).
+2. **`Module::load_named(image, kernel_name)`** — `Module::load`
+   is now this with `"perceive"`, so the spike path's behaviour is
+   the general path's behaviour. A failed name resolution unloads
+   the just-loaded module before returning (the pre-existing error
+   path, kept).
+3. **`Module::launch_args`** + **`crate::KernelArg`** — typed
+   argument descriptors instead of a raw `*mut *mut c_void` at the
+   call site. The descriptor enum, its byte encoding
+   (`size`/`write_into`) and the launch-shape validation
+   (`check_launch_dims`: dims ≥ 1, grid y/z ≤ 65535, block ≤ 1024
+   threads) live in `lib.rs`, **outside** the feature gate, so
+   they are unit-tested on any machine (4 tests: sizes pinned,
+   per-variant little-endian encodings vs independently computed
+   `to_le_bytes`, the short-buffer panic path, dims accept/reject
+   incl. each error message). `launch_args` materialises owned
+   argument storage first and builds the driver's pointer array
+   only once that vector is final (no pointer into a
+   still-growing `Vec`). It is an `unsafe fn`: argument
+   count/order/types vs the kernel signature and device-pointer
+   validity are caller guarantees the driver cannot check, and
+   the contract says so in those words. `KernelArg::from_devbuf`
+   is the checked constructor for pointers this crate allocated.
+   `check_launch_dims` is `#[cfg(any(feature, test))]`-gated to
+   exactly its two consumers rather than carrying a dead-code
+   allow.
+4. **Byte-level copies** — `DevBuf::upload_bytes` (safe; the same
+   hard exact-length check as `upload`, for the item-1 reason) and
+   two async downloads: `download_async` (raw host pointer;
+   `unsafe fn`, the device side length-checked, the host side the
+   caller's contract) and `download_to_pinned` (RAII destination,
+   size equality checked; `unsafe fn` only because of the raw
+   stream handle — the `Event::record` precedent).
+   `DevBuf::byte_len` / `PinnedBuf::byte_len` / `PinnedBuf::as_bytes`
+   accessors alongside.
+5. **`Gpu::new_stream()` → `Stream`** — RAII second stream for the
+   two-stream shadow (`handle()`, `synchronize()`; one new FFI
+   entry, `cuStreamSynchronize`; destroyed exactly once in
+   `Drop`, which synchronises it implicitly per the driver).
+
+**Proof.** CPU: 12 tests green (7 lib unit — 3 pre-existing + 4
+new — and 5 property), here and on the Thor. Thor (device total
+131,856,920,576 B, NVRTC 13.2): `tests/sheaf_stencil.rs`
+(feature-gated, `#[ignore]`d like the spikes) compiles a sheaf
+stencil — edge-parallel f64 Laplacian apply with `atomicAdd`,
+plus a node-parallel smooth step — through the **new API only**
+(`compile`, `load_named` ×2, `new_stream`, `upload_bytes`,
+`launch_args`, `download_to_pinned`), on the second stream, and
+compares against the substrate's per-edge rule restated in the
+test. Result: compile 49.6 ms; Laplacian max err **0.0**
+(bit-exact on this graph), smooth-step max err **1.388e-17**,
+stated tol 1e-9 (justified in the test: reassociation-only
+divergence, bound ~1e-14 at max degree 4). Scratch dir removed
+after the run; the Slice-1 soak process verified alive, same
+PID, before and after.

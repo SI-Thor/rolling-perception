@@ -12,18 +12,28 @@
 //! Honesty rules, inherited from the sibling crates:
 //!
 //! * Payload **data** really travels through `rolling_substrate_core`
-//!   rings — one [`FluidSubstrateBuffer`] per stage edge, Disruptor
-//!   claim/finalize protocol, no direct stage-to-stage calls.
-//! * **Lineage** lives in each slot's header while the slot is leased.
-//!   Headers are cleared when a slot is re-leased, so a stage captures a
-//!   [`LineageSnapshot`] (bitmask + counts — plain copyable values) from
-//!   its input's lineage relay, replays those counts into its output
-//!   slot's header, then records itself. The published payload's header
-//!   therefore shows every stage's exact visit count.
-//! * A small control record ([`TickMeta`]: decide's signal summary and
-//!   the lineage relay) travels alongside the rings. It is control
-//!   state, not payload data, and it is labelled as such — the same
-//!   role `Manifold` plays in `rolling-perception`.
+//!   rings — no direct stage-to-stage calls. Ring placement follows
+//!   ARCHITECTURE claim D12 (see `docs/RING-BENCH.md`): every
+//!   single-producer → single-consumer queue-semantics edge is an
+//!   [`SpscRing`] (the DESIGN §3.2 ring), because the Disruptor ring
+//!   consumed as a queue tore 5–27% of reads silently in the bench.
+//!   The one remaining [`FluidSubstrateBuffer`] is `publish → world`,
+//!   a latest-value publish point with no queue consumer, which is
+//!   exactly the use D12 leaves on the Disruptor.
+//! * **Lineage** travels *in* the payload on the SPSC edges: each
+//!   payload carries a [`LineageSnapshot`] (bitmask + counts — plain
+//!   copyable values) and each stage advances it by its own visit
+//!   before handing the payload on. On the final Disruptor edge the
+//!   snapshot is additionally replayed into the slot header (headers
+//!   are cleared when a slot is re-leased, so the replay is what the
+//!   header shows), and the published lineage is captured from it.
+//!   Either way, the published payload shows every stage's exact
+//!   visit count.
+//! * A small control record ([`TickMeta`]: decide's signal summary,
+//!   with the lineage snapshot mirrored into it as stages advance)
+//!   travels alongside the rings. It is control state, not payload
+//!   data, and it is labelled as such — the same role `Manifold`
+//!   plays in `rolling-perception`.
 //! * **Ops are counted, not timed**, wherever a saving is claimed. The
 //!   director/gating saving is proven by counters first; wall time is
 //!   reported second and never as the proof.
@@ -34,6 +44,7 @@ use rolling_adaptive::LensFile;
 use rolling_substrate_core::gating::{gated_apply, Viewport};
 use rolling_substrate_core::lineage::COUNTED_NODES;
 use rolling_substrate_core::sheaf::SheafGraph;
+use rolling_substrate_core::spsc::{Consumer, Policy, Producer, RingStats, SpscRing};
 use rolling_substrate_core::substrate::{FluidSubstrateBuffer, Lease};
 use std::hint::black_box;
 use std::thread::sleep;
@@ -113,6 +124,22 @@ impl LineageSnapshot {
         }
     }
 
+    /// This snapshot plus one visit by `stage`, computed on the
+    /// value itself. This is the SPSC edges' twin of the
+    /// replay-into-header + record + capture dance below: the
+    /// substrate's `LineageHeader::record` sets the visited bit and
+    /// bumps the count saturatingly, so advancing the snapshot
+    /// directly is bit-for-bit the same lineage.
+    fn advanced(&self, stage: usize) -> Self {
+        assert!(stage < 64, "node id {stage} exceeds bitmask");
+        let mut next = *self;
+        next.mask |= 1u64 << stage;
+        if stage < COUNTED_NODES {
+            next.counts[stage] = next.counts[stage].saturating_add(1);
+        }
+        next
+    }
+
     /// Replay this snapshot into a freshly leased slot's header, so
     /// lineage accumulates across ring edges even though each slot's
     /// header is cleared on lease.
@@ -136,7 +163,9 @@ impl LineageSnapshot {
 
 /// Control state carried alongside one tick (NOT payload data; the
 /// payload itself travels in the rings). Carries decide's signal
-/// summary and the lineage relay between stages.
+/// summary; its `lineage` field mirrors the payload-carried
+/// snapshot as stages advance it (the payload is the transport —
+/// this is the per-tick record).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TickMeta {
     /// Signal centroid (x, y in grid cells) computed by `decide`.
@@ -144,6 +173,52 @@ pub struct TickMeta {
     /// Total |value| mass `decide` saw (0 ⇒ no signal).
     pub signal_mass: f32,
     pub lineage: LineageSnapshot,
+}
+
+// ------------------------------------------------------------- ring edges
+
+/// One payload in flight on a migrated (SPSC) edge: the grid plus
+/// the lineage accumulated so far. Lineage rides *inside* the
+/// payload here — the SPSC slot has no header, and the snapshot is a
+/// plain value, so carrying it in the message is both the simplest
+/// and the most honest route: what a stage received is exactly what
+/// the previous stage sent.
+#[derive(Debug, Clone)]
+struct RingPayload {
+    data: [f32; DIM],
+    lineage: LineageSnapshot,
+}
+
+/// Mint one migrated edge: an [`SpscRing`] at the cascade's ring
+/// capacity under [`Policy::Block`] (the cascade is sequential, so
+/// the producer never actually waits; Block is the policy whose
+/// semantics — nothing is ever lost — the cascade was written
+/// against). Returns the (producer, consumer) ends; the ends hold
+/// the ring alive between them.
+fn spsc_edge() -> (Producer<RingPayload>, Consumer<RingPayload>) {
+    let ring = SpscRing::new(RING_CAP, Policy::Block);
+    (ring.producer(), ring.consumer())
+}
+
+/// Send on a migrated edge. `Block` never returns `Err` — a drop
+/// here would mean the ring's protocol changed under us, which is a
+/// bug to name, not a case to handle.
+fn send_edge(tx: &mut Producer<RingPayload>, payload: RingPayload, edge: &str) {
+    if tx.send(payload).is_err() {
+        panic!("edge {edge}: SpscRing under Policy::Block returned a drop");
+    }
+}
+
+/// Receive the one in-flight payload on a migrated edge. The
+/// cascade is sequential and every tick sends before it receives, so
+/// an empty lane at this point means a message was lost upstream —
+/// the exact failure the Disruptor's queue consumption hid (it
+/// would have handed back a torn or stale slot instead). Here it is
+/// a loud panic naming the tick and the edge.
+fn recv_edge(rx: &mut Consumer<RingPayload>, claim: u64, edge: &str) -> RingPayload {
+    rx.recv().unwrap_or_else(|| {
+        panic!("tick {claim}: stage input missing on edge {edge} — SPSC lane empty")
+    })
 }
 
 // ---------------------------------------------------------------- director
@@ -238,13 +313,34 @@ pub struct TickTrace {
 }
 
 /// The cascade. Owns one ring per stage edge plus the director.
+///
+/// Ring placement (ARCHITECTURE claim D12): the five inter-stage
+/// edges are single-producer → single-consumer queues and run on
+/// [`SpscRing`]; only `publish → world` stays on the Disruptor (see
+/// the field comment there). The topology audit behind this split
+/// is in the README's "Ring placement" section.
 pub struct Pipeline {
-    ring_in: FluidSubstrateBuffer,        // producer  -> perceive
-    ring_perceived: FluidSubstrateBuffer, // perceive  -> decide
-    ring_decided: FluidSubstrateBuffer,   // decide    -> direct
-    ring_directed: FluidSubstrateBuffer,  // direct    -> refine
-    ring_refined: FluidSubstrateBuffer,   // refine    -> publish
-    ring_out: FluidSubstrateBuffer,       // publish   -> world
+    // Migrated edges (D12): SPSC queues, producer/consumer end pairs.
+    in_tx: Producer<RingPayload>, // producer  -> perceive
+    in_rx: Consumer<RingPayload>,
+    perceived_tx: Producer<RingPayload>, // perceive  -> decide
+    perceived_rx: Consumer<RingPayload>,
+    decided_tx: Producer<RingPayload>, // decide    -> direct
+    decided_rx: Consumer<RingPayload>,
+    directed_tx: Producer<RingPayload>, // direct    -> refine
+    directed_rx: Consumer<RingPayload>,
+    refined_tx: Producer<RingPayload>, // refine    -> publish
+    refined_rx: Consumer<RingPayload>,
+    // publish -> world stays on the Disruptor, per claim D12: the
+    // Disruptor keeps genuine multi-producer junctions and
+    // latest-value publish points. This edge is the latter — the
+    // published payload is returned to the caller directly as
+    // `Published`; this ring is never consumed as a queue (nothing
+    // in the cascade calls `is_published`/`read_published` on it),
+    // so the torn-read failure D12 refutes cannot occur here. It
+    // remains as the substrate's publish surface: a finalized slot
+    // whose header carries the completed lineage.
+    ring_out: FluidSubstrateBuffer,
     graph: SheafGraph,
     pub director: Director,
     gate: Viewport,
@@ -260,12 +356,22 @@ impl Default for Pipeline {
 
 impl Pipeline {
     pub fn new() -> Self {
+        let (in_tx, in_rx) = spsc_edge();
+        let (perceived_tx, perceived_rx) = spsc_edge();
+        let (decided_tx, decided_rx) = spsc_edge();
+        let (directed_tx, directed_rx) = spsc_edge();
+        let (refined_tx, refined_rx) = spsc_edge();
         Self {
-            ring_in: FluidSubstrateBuffer::new(RING_CAP, DIM),
-            ring_perceived: FluidSubstrateBuffer::new(RING_CAP, DIM),
-            ring_decided: FluidSubstrateBuffer::new(RING_CAP, DIM),
-            ring_directed: FluidSubstrateBuffer::new(RING_CAP, DIM),
-            ring_refined: FluidSubstrateBuffer::new(RING_CAP, DIM),
+            in_tx,
+            in_rx,
+            perceived_tx,
+            perceived_rx,
+            decided_tx,
+            decided_rx,
+            directed_tx,
+            directed_rx,
+            refined_tx,
+            refined_rx,
             ring_out: FluidSubstrateBuffer::new(RING_CAP, DIM),
             graph: SheafGraph::line(DIM),
             director: Director::new(4, 1, 2),
@@ -275,6 +381,23 @@ impl Pipeline {
             tick: 0,
             ops: Ops::default(),
         }
+    }
+
+    /// Per-edge INV-R4 accounting for the five migrated SPSC edges,
+    /// in cascade order: `(edge name, stats)`. This is the
+    /// conservation accounting the Disruptor cannot offer (it has no
+    /// consumer release and no counters): at any quiescent point,
+    /// `produced == consumed` with zero drops on every edge is the
+    /// proof no message was lost, duplicated, or silently dropped —
+    /// see `tests/ring_stress.rs`.
+    pub fn edge_stats(&self) -> [(&'static str, RingStats); 5] {
+        [
+            ("in", self.in_tx.stats()),
+            ("perceived", self.perceived_tx.stats()),
+            ("decided", self.decided_tx.stats()),
+            ("directed", self.directed_tx.stats()),
+            ("refined", self.refined_tx.stats()),
+        ]
     }
 
     /// Run one payload through all five stages. The payload enters via
@@ -296,12 +419,19 @@ impl Pipeline {
         let mut meta = TickMeta::default();
         let mut stage_durations = [Duration::ZERO; 5];
 
-        // producer: write the payload into the input ring.
+        // producer: send the payload into the input ring (SPSC
+        // queue, D12). Fresh payload, empty lineage.
         {
-            let mut lease = self.ring_in.lease();
-            debug_assert_eq!(lease.claim(), tick);
-            lease.data_mut().copy_from_slice(input);
-            lease.finalize();
+            let mut data = [0.0f32; DIM];
+            data.copy_from_slice(input);
+            send_edge(
+                &mut self.in_tx,
+                RingPayload {
+                    data,
+                    lineage: LineageSnapshot::default(),
+                },
+                "in",
+            );
         }
 
         // perceive: gated kernel through the ring. Consumes the gate
@@ -309,8 +439,8 @@ impl Pipeline {
         let gate_used = self.gate;
         let t = Instant::now();
         stage_perceive(
-            &self.ring_in,
-            &self.ring_perceived,
+            &mut self.in_rx,
+            &mut self.perceived_tx,
             tick,
             gate_used,
             &mut meta,
@@ -321,8 +451,8 @@ impl Pipeline {
         // decide: signal summary + a counted scaling pass.
         let t = Instant::now();
         stage_decide(
-            &self.ring_perceived,
-            &self.ring_decided,
+            &mut self.perceived_rx,
+            &mut self.decided_tx,
             tick,
             &mut meta,
             &mut self.ops,
@@ -333,8 +463,8 @@ impl Pipeline {
         // by perceive on the NEXT tick — the feedback loop.
         let t = Instant::now();
         let new_gate = stage_direct(
-            &self.ring_decided,
-            &self.ring_directed,
+            &mut self.decided_rx,
+            &mut self.directed_tx,
             tick,
             &mut meta,
             &mut self.director,
@@ -346,8 +476,8 @@ impl Pipeline {
         // non-increasing per payload inside the stage.
         let t = Instant::now();
         let (e_before, e_after) = stage_refine(
-            &self.ring_directed,
-            &self.ring_refined,
+            &mut self.directed_rx,
+            &mut self.refined_tx,
             tick,
             &self.graph,
             &mut meta,
@@ -358,7 +488,7 @@ impl Pipeline {
         // publish: checksum + final lineage snapshot, out the last ring.
         let t = Instant::now();
         let published = stage_publish(
-            &self.ring_refined,
+            &mut self.refined_rx,
             &self.ring_out,
             tick,
             PublishContext {
@@ -380,56 +510,32 @@ impl Pipeline {
     }
 }
 
-/// Copy a published input claim into a fresh output lease, replay the
-/// lineage relay into the output header, and record this stage. The
-/// shared skeleton every stage is built from — data moves ring→ring,
-/// never stage→stage.
-fn handoff<'a>(
-    input: &FluidSubstrateBuffer,
-    output: &'a FluidSubstrateBuffer,
-    claim: u64,
-    meta: &TickMeta,
-    stage: usize,
-) -> (Lease<'a>, LineageSnapshot) {
-    assert!(
-        input.is_published(claim),
-        "stage input claim {claim} not published"
-    );
-    // SAFETY: claim is published on `input`, ticks are strictly
-    // sequential in this crate, and the next lap of that slot cannot be
-    // leased until this stage has finished copying (the producer of the
-    // next tick runs after this tick completes).
-    let data: Vec<f32> = unsafe { input.read_published(claim) }.to_vec();
-    let mut lease = output.lease();
-    debug_assert_eq!(
-        lease.claim(),
-        claim,
-        "rings must advance in lockstep, one claim per tick"
-    );
-    lease.data_mut().copy_from_slice(&data);
-    meta.lineage.replay_into(&lease);
-    lease.record_visit(stage);
-    let snapshot = LineageSnapshot::capture(&lease);
-    (lease, snapshot)
-}
-
 // ------------------------------------------------------------------ stages
+//
+// Every stage is the same skeleton on the migrated edges: receive
+// the one in-flight payload from the input lane, advance its
+// lineage by this stage, do the stage's work on the grid, send it
+// down the output lane. Data moves ring→ring, never stage→stage.
+// (`publish` is the exception in shape only: its output edge is the
+// Disruptor publish point, so it writes a lease instead of sending.)
 
 fn stage_perceive(
-    input: &FluidSubstrateBuffer,
-    output: &FluidSubstrateBuffer,
+    input: &mut Consumer<RingPayload>,
+    output: &mut Producer<RingPayload>,
     claim: u64,
     gate: Viewport,
     meta: &mut TickMeta,
     ops: &mut Ops,
 ) {
-    let (mut lease, snapshot) = handoff(input, output, claim, meta, STAGE_PERCEIVE);
+    let payload = recv_edge(input, claim, "in");
+    let snapshot = payload.lineage.advanced(STAGE_PERCEIVE);
+    let mut data = payload.data;
     ops.perceive_baseline += DIM as u64;
     // The counted kernel: real per-element work, applied ONLY inside
     // the gate by gated_apply — skipped elements are never touched,
     // and the closure call count is the op count.
     let gated_before = ops.perceive_gated;
-    let stats = gated_apply(lease.data_mut(), WIDTH, HEIGHT, &gate, |v| {
+    let stats = gated_apply(&mut data, WIDTH, HEIGHT, &gate, |v| {
         ops.perceive_gated += 1;
         *v = (*v * 1.5).tanh() * 2.0;
     });
@@ -439,21 +545,29 @@ fn stage_perceive(
         "op counter and gated_apply counts must agree"
     );
     meta.lineage = snapshot;
-    lease.finalize();
+    send_edge(
+        output,
+        RingPayload {
+            data,
+            lineage: snapshot,
+        },
+        "perceived",
+    );
 }
 
 fn stage_decide(
-    input: &FluidSubstrateBuffer,
-    output: &FluidSubstrateBuffer,
+    input: &mut Consumer<RingPayload>,
+    output: &mut Producer<RingPayload>,
     claim: u64,
     meta: &mut TickMeta,
     ops: &mut Ops,
 ) {
-    let (mut lease, snapshot) = handoff(input, output, claim, meta, STAGE_DECIDE);
+    let payload = recv_edge(input, claim, "perceived");
+    let snapshot = payload.lineage.advanced(STAGE_DECIDE);
+    let mut data = payload.data;
     // Signal summary: |value|-weighted centroid over the grid, plus a
     // counted scaling pass so decide does real work on the payload.
     let (mut sx, mut sy, mut mass) = (0.0f32, 0.0f32, 0.0f32);
-    let data = lease.data_mut();
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let v = &mut data[y * WIDTH + x];
@@ -470,37 +584,54 @@ fn stage_decide(
     }
     meta.signal_mass = mass;
     meta.lineage = snapshot;
-    lease.finalize();
+    send_edge(
+        output,
+        RingPayload {
+            data,
+            lineage: snapshot,
+        },
+        "decided",
+    );
 }
 
 fn stage_direct(
-    input: &FluidSubstrateBuffer,
-    output: &FluidSubstrateBuffer,
+    input: &mut Consumer<RingPayload>,
+    output: &mut Producer<RingPayload>,
     claim: u64,
     meta: &mut TickMeta,
     director: &mut Director,
     ops: &mut Ops,
 ) -> Viewport {
-    let (lease, snapshot) = handoff(input, output, claim, meta, STAGE_DIRECT);
+    let payload = recv_edge(input, claim, "decided");
+    let snapshot = payload.lineage.advanced(STAGE_DIRECT);
     // Direct does not transform payload data; it transforms the
     // CONTROL state (the gate). The payload passes through the ring
     // untouched, with lineage recorded.
     let gate = director.update(meta.signal, ops);
     meta.lineage = snapshot;
-    lease.finalize();
+    send_edge(
+        output,
+        RingPayload {
+            data: payload.data,
+            lineage: snapshot,
+        },
+        "directed",
+    );
     gate
 }
 
 fn stage_refine(
-    input: &FluidSubstrateBuffer,
-    output: &FluidSubstrateBuffer,
+    input: &mut Consumer<RingPayload>,
+    output: &mut Producer<RingPayload>,
     claim: u64,
     graph: &SheafGraph,
     meta: &mut TickMeta,
     ops: &mut Ops,
 ) -> (f64, f64) {
-    let (mut lease, snapshot) = handoff(input, output, claim, meta, STAGE_REFINE);
-    let mut s: Vec<f64> = lease.data_mut().iter().map(|&v| v as f64).collect();
+    let payload = recv_edge(input, claim, "directed");
+    let snapshot = payload.lineage.advanced(STAGE_REFINE);
+    let mut data = payload.data;
+    let mut s: Vec<f64> = data.iter().map(|&v| v as f64).collect();
     let before = graph.energy(&s);
     graph.smooth_step(&mut s, SHEAF_ALPHA);
     let after = graph.energy(&s);
@@ -511,11 +642,18 @@ fn stage_refine(
         "sheaf energy increased on tick {claim}: {before} -> {after}"
     );
     ops.refine += (DIM + graph.edges().len()) as u64;
-    for (dst, &v) in lease.data_mut().iter_mut().zip(s.iter()) {
+    for (dst, &v) in data.iter_mut().zip(s.iter()) {
         *dst = v as f32;
     }
     meta.lineage = snapshot;
-    lease.finalize();
+    send_edge(
+        output,
+        RingPayload {
+            data,
+            lineage: snapshot,
+        },
+        "refined",
+    );
     (before, after)
 }
 
@@ -529,14 +667,31 @@ struct PublishContext {
 }
 
 fn stage_publish(
-    input: &FluidSubstrateBuffer,
+    input: &mut Consumer<RingPayload>,
     output: &FluidSubstrateBuffer,
     claim: u64,
     ctx: PublishContext,
     meta: &mut TickMeta,
     ops: &mut Ops,
 ) -> Published {
-    let (mut lease, snapshot) = handoff(input, output, claim, meta, STAGE_PUBLISH);
+    let payload = recv_edge(input, claim, "refined");
+    // The output edge stays on the Disruptor (claim D12: a
+    // latest-value publish point — see the `ring_out` field comment
+    // on `Pipeline`). The lease dance is kept for this edge exactly
+    // as before: replay the incoming snapshot into the fresh slot's
+    // header, record publish, capture the completed lineage back
+    // out. Claims advance in lockstep with ticks, as they did when
+    // every edge was a Disruptor.
+    let mut lease = output.lease();
+    debug_assert_eq!(
+        lease.claim(),
+        claim,
+        "publish ring must advance in lockstep, one claim per tick"
+    );
+    lease.data_mut().copy_from_slice(&payload.data);
+    payload.lineage.replay_into(&lease);
+    lease.record_visit(STAGE_PUBLISH);
+    let snapshot = LineageSnapshot::capture(&lease);
     let mut checksum = 0.0f64;
     for &v in lease.data_mut().iter() {
         checksum += v as f64;
