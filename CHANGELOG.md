@@ -6,6 +6,18 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — leverage memo for arXiv:2610.39302, 2026-11-02
+
+- docs/PAPER-LEVERAGE-2610.39302.md: seven levers extracted from
+  Balestriero & LeCun with their conditions, each with a falsifiable
+  application on data already in the tree, a NOT-USABLE list, and
+  four deficits against our own record (D1: a same-width embedder
+  swap passes EXTRACTION-PLAN's guard silently while invalidating
+  baselines and calibration — fix dispatched to telltape; D2: creep
+  re-baselining decays per the nuisance theorem; D3: the spec's
+  drift/change distinction is a subspace distinction, not a
+  magnitude one; D4: cite the theorem only in its conditional form).
+
 ## [Unreleased] — TELLTAPE PUBLISHED, 2026-11-02
 
 - The extracted change-ledger core is public:
