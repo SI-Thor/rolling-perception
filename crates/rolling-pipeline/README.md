@@ -148,8 +148,10 @@ estimate ends at 635.1 µs against the true 675 µs. `rolling-adaptive`
 needed no API additions — `LensFile::{predict_next_us, observe}` and
 its `stats` were already the right surface.
 
-**CUDA shadow → substrate, at the seam — measured, and blocked in
-the open.** `src/executor.rs` is the trait seam where the GPU
+**CUDA shadow → substrate, at the seam — measured, and unbuilt in
+the open, by choice.** (An earlier edition of this section said
+"blocked": the cuda-thor API gap it named has since closed; the
+executor now rests on the crossover bound, below.) `src/executor.rs` is the trait seam where the GPU
 backend lands: an `Executor` turns one payload into one
 `Published` under a stated contract (identical outputs, complete
 lineage, non-increasing sheaf energy, counted ops). `Pipeline`
@@ -167,22 +169,23 @@ stages, and `intended_placement` encodes that map in code:
 | refine | GPU, shadow stream | **not run — tick refused** |
 | publish | CPU, permanently | CPU |
 
-The `gpu-shadow` fill (2026-11-01, this round) wired the executor
-for real up to the exact point `cuda-thor`'s public API (v0.2)
-stops. Construction now probes the device through that API —
-verified on the Thor itself: driver init + primary context +
-`cuMemGetInfo` reported the device present (free 19,431,636,992 /
-total 131,856,920,576 bytes at probe time) — and every attempted
-tick appends a placement receipt (`TickReceipt`: per-stage
-`StageRun`, refusal included). Every tick is then **refused,
-typed**: `NoGpuBackend` when the probe finds no device,
-`GpuApiGap` when it finds one. No stage closures run under the
-GPU name; a fallback that did would print correct numbers on a
-false receipt, which is worse than a refusal.
+The `gpu-shadow` executor (2026-11-01) probes the device for real
+at construction through `cuda-thor`'s public API — verified on the
+Thor itself: driver init + primary context + `cuMemGetInfo`
+reported the device present (free 19,431,636,992 / total
+131,856,920,576 bytes at probe time) — and every attempted tick
+appends a placement receipt (`TickReceipt`: per-stage `StageRun`,
+refusal included). Every tick is then **refused, typed**:
+`NoGpuBackend` when the probe finds no device, `GpuNotBuilt` when
+it finds one. No stage closures run under the GPU name; a fallback
+that did would print correct numbers on a false receipt, which is
+worse than a refusal.
 
-The gap is five specific absences in `cuda-thor/src/gpu.rs`, each
-independently sufficient to stop the refine stencil (an `f64`
-graph Laplacian step — the pipeline's only kernel-shaped stage):
+As first built, the refusal rested on a gap: five specific
+absences in `cuda-thor/src/gpu.rs`, each independently sufficient
+to stop the refine stencil (an `f64` graph Laplacian step — the
+pipeline's only kernel-shaped stage). That record stands below as
+history; the gap itself is **closed** (see after the list).
 
 1. `nvrtc_compile` is a private fn — no public kernel compilation.
 2. `Module::load` hardcodes the kernel name `"perceive"`.
@@ -194,34 +197,38 @@ graph Laplacian step — the pipeline's only kernel-shaped stage):
 5. `Gpu` owns exactly one stream and exposes no stream creation —
    the two-stream shadow has no second stream.
 
-**The smallest cuda-thor additions that unblock the fill**
-(specified here, not implemented — that crate is another lane's):
-(a) make the existing compile path public
-(`pub fn compile(source, arch_flag, want_cubin)` over
-`nvrtc_compile`); (b) `Module::load_named(image, kernel_name)`;
-(c) one generic launch,
-`unsafe fn launch_args(&self, stream, args: &mut [*mut c_void], grid, block)`;
-(d) byte-level copies: `DevBuf::upload_bytes(&[u8])` and a
-`cuMemcpyDtoHAsync` wrapper; (e) `Gpu::new_stream()` returning an
-RAII stream handle. All five wrap FFI that already exists in
-`gpu.rs`; none changes existing behaviour.
+**The smallest cuda-thor additions that unblock the fill** were
+specified here when the gap was live: (a) make the existing
+compile path public (`pub fn compile(source, arch_flag,
+want_cubin)` over `nvrtc_compile`); (b) `Module::load_named(image,
+kernel_name)`; (c) one generic launch over typed argument
+descriptors; (d) byte-level copies (`DevBuf::upload_bytes`,
+async/pinned downloads); (e) `Gpu::new_stream()` returning an RAII
+stream handle. **All five have since shipped** in cuda-thor,
+essentially as specified, and a sheaf stencil run through the new
+API on the Thor came back with a **bit-exact Laplacian** (max err
+0.0; smooth step 1.4e-17) — `crates/cuda-thor/tests/sheaf_stencil.rs`.
+The fill is no longer blocked by anything. It is unbuilt by
+choice, for the reason the next section measures.
 
-**The crossover, as far as it can honestly be measured today.**
-The GPU side is unmeasurable until the gap closes, so what was
-measured is the bar it must clear — CPU `smooth_step` medians on
-the Thor (release build, `tests/gpu_shadow.rs`): **0.268 µs at
-the fixture's line(64) graph; 10.04 µs at line(4,096)**. Against
-that bar: the wave-2 spikes measured launch-bound pickup at
-p50 1.1 µs — one launch's pickup alone is ~4× the entire CPU
-stencil at fixture scale, before any upload, download, or sync.
-Verdict: GPU refine **cannot win at the fixture's scale**, and at
-4,096 nodes a win would need the round trip (two copies + launch
-+ sync) to fit inside ~10 µs, which the measured pickup makes
-implausible for one-shot launches; if a crossover exists for this
-stencil it lies above 4,096 nodes or behind a batched/persistent
-arrangement the spikes already rejected for slice work. That is
-a reasoned bound from measured parts, labelled as such — not a
-GPU measurement, because there isn't one.
+**The crossover — why the executor stays unbuilt.** What was
+measured is the bar a GPU fill must clear — CPU `smooth_step`
+medians on the Thor (release build, `tests/gpu_shadow.rs`):
+**0.268 µs at the fixture's line(64) graph; 10.04 µs at
+line(4,096)**. Against that bar: the wave-2 spikes measured
+launch-bound pickup at p50 1.1 µs — one launch's pickup alone is
+~4× the entire CPU stencil at fixture scale, before any upload,
+download, or sync. Verdict: GPU refine **cannot win at the
+fixture's scale**, and at 4,096 nodes a win would need the round
+trip (two copies + launch + sync) to fit inside ~10 µs, which the
+measured pickup makes implausible for one-shot launches; if a
+crossover exists for this stencil it lies above 4,096 nodes or
+behind a batched/persistent arrangement the spikes already
+rejected for slice work. That is a reasoned bound from measured
+parts, labelled as such. The GPU stencil itself is no longer
+unmeasured — cuda-thor's own test proves it on the device; what
+the bound says is that wiring it in *here*, as this pipeline's
+refine stage, cannot pay at the scales this pipeline serves.
 
 **One end-to-end demo.** `src/bin/endtoend.rs` runs the whole
 composition over the fixture stream and prints the per-tick trace
@@ -236,7 +243,7 @@ cargo test  -p rolling-pipeline          # incl. composition tests
 cargo check -p rolling-pipeline --features gpu-shadow   # type-checks anywhere
 # on the Thor (the only place a gpu-shadow build links):
 cargo test --release -p rolling-pipeline --features gpu-shadow -- --nocapture
-#   -> real-device probe, the typed GpuApiGap refusal, CPU stencil medians
+#   -> real-device probe, the typed GpuNotBuilt refusal, CPU stencil medians
 ```
 
 ## Trace files (file-replay producer)

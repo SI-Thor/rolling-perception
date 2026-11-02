@@ -7,13 +7,16 @@
 //! What they establish, honestly:
 //! * the construction probe really reaches the device (memory
 //!   figures are the device's own, via `cuMemGetInfo`);
-//! * the refusal that follows matches the probe — `GpuApiGap` on a
-//!   box with a GPU, because cuda-thor v0.2's public API cannot
-//!   express the refine stencil (see `executor::API_GAP`);
+//! * the refusal that follows matches the probe — `GpuNotBuilt` on
+//!   a box with a GPU: the executor is unbuilt by choice, because
+//!   the crossover bound (below) puts any GPU win above ~4,096
+//!   nodes (see `executor::NOT_BUILT`). The cuda-thor API gaps that
+//!   once blocked the fill are closed and the stencil itself is
+//!   Thor-proven in `crates/cuda-thor/tests/sheaf_stencil.rs`;
 //! * the CPU side of the GPU/CPU crossover for the sheaf stencil,
-//!   measured at the fixture's graph size and at 4,096 nodes. The
-//!   GPU side cannot be measured until the API gap closes; the
-//!   bench prints the CPU numbers the GPU would have to beat.
+//!   measured at the fixture's graph size and at 4,096 nodes — the
+//!   bar any GPU round trip would have to beat per tick before
+//!   building the executor could pay.
 #![cfg(feature = "gpu-shadow")]
 
 use rolling_pipeline::executor::{
@@ -38,8 +41,8 @@ fn real_hardware_probe_and_refusal_agree() {
                 .execute_tick(&hotspot_payload(3.0, 3.0, 7))
                 .unwrap_err();
             assert!(
-                matches!(err, ExecutorError::GpuApiGap { .. }),
-                "GPU present, so the refusal must be the API gap, got {err:?}"
+                matches!(err, ExecutorError::GpuNotBuilt { .. }),
+                "GPU present, so the refusal must be the unbuilt-by-choice one, got {err:?}"
             );
             println!("refusal: {err}");
         }

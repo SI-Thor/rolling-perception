@@ -6,6 +6,48 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — polish round: blockers worked, 2026-11-02
+
+From docs/audits/POLISH-BACKLOG.md (worked addenda recorded there):
+
+- **Licences added** (blocker 2): LICENSE + LICENSE-MIT +
+  LICENSE-APACHE at the root, Apache text diffed section-by-section
+  against the canonical source; all 7 crates' fields verified.
+- **Executor rationale corrected** (ENGINE major): the refusal is
+  now `GpuNotBuilt`, carrying the measured crossover bound; the
+  five closed API gaps are fenced as history, not cited as current.
+- **Workspace hygiene**: `cargo fmt --all` applied, all 4 clippy
+  warnings fixed (clippy `--workspace --all-targets` zero warnings,
+  `fmt --check` clean, 107 tests green); `.gitignore` now excludes
+  `__pycache__/`/`*.pyc`/`.env` (history scrub of already-tracked
+  bytecode is scheduled with the public flip, noted in AUDIT-OPS).
+- **Stale numbers corrected**: README/READING-GUIDE test counts;
+  RESULTS' fMP4 row (original preserved as a dated correction) and
+  the soak snapshot row fenced as point-in-time with its source.
+- **Install pack made real** (blocker 1): install.sh builds and
+  installs `confluence-watch` under its true name, generates units
+  matching the real deployment, and says plainly what it cannot
+  automate; guide + SERVICE-CARD rewritten to the console's real
+  port/routes. Proven in a scratch prefix (INSTALL-PROOF.md):
+  installed binary ran the bundled fixtures end-to-end — 34 embeds
+  exactly as ground truth predicts, verdicts on the right frames
+  and tiles, console serving the installed ledger. (The embed
+  layer there is a fenced test double; I-JEPA verdict semantics
+  remain acceptance.sh-on-Thor territory.)
+- **Console verdict-feed defect FIXED** (found by the install
+  proof): the feed ignored the watcher's `changed_tiles` rows and
+  their µs timestamps, silently dropping real verdicts. The parser
+  now surfaces both row shapes (17/17 HTTP checks incl. the
+  corrections hardening: unknown ids and malformed JSON → 400).
+  Deployment of the fixed console to the Thor is a post-verdict
+  decision; the soak's record is the ledger, which was always
+  complete.
+- **Presence live for its human acceptance** (2026-11-02): the v3
+  stack runs against the live soak ledger via a read-only rendered
+  view; the machine-checked loop grounded its reply in real
+  verdicts and passed the claim checker untouched. The
+  from-the-chair human test is the remaining step.
+
 ## [Unreleased] — phase 2b: fixtures cold, fMP4 wired, findings filed, 2026-11-02
 
 - **Rehearsal blocker S2 cleared**: cold fixtures are bundled

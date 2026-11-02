@@ -13,7 +13,9 @@ use rolling_perception::{default_lanes, run_batched, run_rolling, RunResult, Sch
 use std::time::Duration;
 
 fn parse_arg(args: &[String], flag: &str) -> Option<u64> {
-    args.windows(2).find(|w| w[0] == flag).and_then(|w| w[1].parse().ok())
+    args.windows(2)
+        .find(|w| w[0] == flag)
+        .and_then(|w| w[1].parse().ok())
 }
 
 fn print_result(r: &RunResult) {
@@ -36,7 +38,10 @@ fn main() {
     let stagger_us = parse_arg(&args, "--stagger-us").unwrap_or(400);
 
     let lanes = default_lanes();
-    let cfg = ScheduleConfig { cycles, sensor_stagger: Duration::from_micros(stagger_us) };
+    let cfg = ScheduleConfig {
+        cycles,
+        sensor_stagger: Duration::from_micros(stagger_us),
+    };
 
     println!("rolling-perception bench");
     println!(
@@ -77,5 +82,8 @@ fn main() {
         "outputs ratio (rolling / batched): {:.1}x",
         r.outputs as f64 / b.outputs as f64
     );
-    println!("checksum delta |batched - rolling|: {:.6}", (b.checksum - r.checksum).abs());
+    println!(
+        "checksum delta |batched - rolling|: {:.6}",
+        (b.checksum - r.checksum).abs()
+    );
 }

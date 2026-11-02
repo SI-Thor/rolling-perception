@@ -16,7 +16,7 @@ its test or marked unproven, and the per-crate invariants ledger.
    survived grading. `docs/FEASIBILITY.md` + `docs/THOR-VERIFICATION.md`
    record what the Thor (sm_110, 20 SMs) actually does, measured.
    **Run alongside this stop:** the README's Quickstart —
-   `cargo test --release` (95 tests; the wave-3 cascade and the
+   `cargo test --release` (107 tests; the wave-3 cascade and the
    Slice-1 live service both run cold over a generated fixture,
    no Thor or camera needed) and the one-command bench.
 2. **The engine** — `crates/` (see *Crates* below) and `docs/WAVE3.md`:

@@ -52,25 +52,24 @@
 //! * [`Pipeline`] itself implements [`Executor`] (`"cpu-rings"`) —
 //!   the shipped backend, delegating to [`Pipeline::run_tick`].
 //! * Behind the `gpu-shadow` cargo feature (off by default),
-//!   [`GpuShadowExecutor`] is wired for real up to the exact point
-//!   `cuda-thor`'s public API (v0.2) stops: construction probes the
-//!   device through that API and records what it found
-//!   ([`ProbeOutcome`]), every attempted tick appends a placement
-//!   receipt ([`TickReceipt`]), and every tick is then **refused** —
+//!   [`GpuShadowExecutor`] probes the device for real at
+//!   construction through `cuda-thor`'s public API and records what
+//!   it found ([`ProbeOutcome`]); every attempted tick appends a
+//!   placement receipt ([`TickReceipt`]) and is then **refused** —
 //!   [`ExecutorError::NoGpuBackend`] when the probe found no device,
-//!   [`ExecutorError::GpuApiGap`] when it found one. The gap is not
-//!   a matter of effort in this crate: the API exposes no way to
-//!   compile a kernel (its NVRTC entry point is private), no way to
-//!   load one by name (`Module::load` hardcodes `"perceive"`), no
-//!   launch signature other than the perceive filter's
-//!   (f32 in → f32 out, `i32 n`), no byte-level buffer copy (uploads
-//!   are `&[f32]` only, so an `f64` section cannot even be staged),
-//!   and no second stream (one `Gpu` owns exactly one). A "GPU
-//!   executor" that ran the CPU stage closures anyway would be a
-//!   lie with a receipt printer; this one prints the receipt for
-//!   the refusal instead. [`API_GAP`] names the blockers and the
-//!   README's Composition section specifies the smallest cuda-thor
-//!   additions that would unblock the fill.
+//!   [`ExecutorError::GpuNotBuilt`] when it found one. An earlier
+//!   version of this executor refused because `cuda-thor`'s API
+//!   could not express the fill (five named gaps); those gaps are
+//!   **closed** — the generic API shipped and a sheaf stencil was
+//!   Thor-proven through it
+//!   (`crates/cuda-thor/tests/sheaf_stencil.rs`). The executor now
+//!   stays unfilled **by choice, on measurement**: the crossover
+//!   bound in the README's Composition section puts any GPU-refine
+//!   win above ~4,096 stencil nodes, and no workload this pipeline
+//!   serves today crosses it. [`NOT_BUILT`] states the reason
+//!   verbatim. A "GPU executor" that ran the CPU stage closures
+//!   anyway would be a lie with a receipt printer; this one prints
+//!   the receipt for the refusal instead.
 
 use crate::{Pipeline, Published, DIM};
 use std::fmt;
@@ -96,14 +95,15 @@ pub enum ExecutorError {
     /// Returned by the `gpu-shadow` executor when its construction
     /// probe finds no usable GPU.
     NoGpuBackend { backend: &'static str },
-    /// A GPU is present, but the backend cannot express its kernel
-    /// through the GPU crate's public API, so it refuses rather than
-    /// silently running the CPU closures under a GPU name. `gap`
-    /// names the first blocking API absence (see
-    /// [`API_GAP`][crate::executor::API_GAP] under `gpu-shadow`).
-    GpuApiGap {
+    /// A GPU is present, but this executor is deliberately not
+    /// built: it refuses rather than silently running the CPU
+    /// closures under a GPU name. `reason` states why (see
+    /// [`NOT_BUILT`][crate::executor::NOT_BUILT] under `gpu-shadow`)
+    /// — the crossover bound, not an API absence: the cuda-thor
+    /// gaps that once blocked the fill are closed.
+    GpuNotBuilt {
         backend: &'static str,
-        gap: &'static str,
+        reason: &'static str,
     },
     /// Payload was not exactly one grid.
     BadInputLength { expected: usize, got: usize },
@@ -115,8 +115,11 @@ impl fmt::Display for ExecutorError {
             ExecutorError::NoGpuBackend { backend } => {
                 write!(f, "no GPU backend in this build (executor '{backend}')")
             }
-            ExecutorError::GpuApiGap { backend, gap } => {
-                write!(f, "GPU present but executor '{backend}' cannot run: {gap}")
+            ExecutorError::GpuNotBuilt { backend, reason } => {
+                write!(
+                    f,
+                    "GPU present but executor '{backend}' is not built: {reason}"
+                )
             }
             ExecutorError::BadInputLength { expected, got } => {
                 write!(f, "payload must be {expected} elements, got {got}")
@@ -164,17 +167,24 @@ impl Executor for Pipeline {
     }
 }
 
-/// The first blockers in `cuda-thor`'s public API (v0.2), in the
-/// order the fill meets them. Any one of them alone stops the
-/// sheaf-stencil kernel; together they stop it five times over.
-/// The README's Composition section specifies the smallest API
-/// additions that would remove them.
+/// Why [`GpuShadowExecutor`] stays unfilled, stated for the
+/// refusal it produces. The cuda-thor API gaps an earlier version
+/// of this file named here are closed (the generic API shipped:
+/// public `compile`, `Module::load_named`, typed `launch_args`,
+/// byte-level transfers, `Gpu::new_stream` — and a sheaf stencil
+/// was Thor-proven through it, bit-exact). What remains is the
+/// crossover bound, measured not asserted: the CPU refine costs a
+/// median 0.268 µs at the fixture's 64-node graph and 10.04 µs at
+/// 4,096 nodes, while one launch's pickup alone measures p50
+/// 1.1 µs — roughly 4× the entire CPU stencil at fixture scale.
+/// A GPU refine cannot win at one-shot launches below ~4,096
+/// nodes, so the fill waits for a workload that crosses the bound.
 #[cfg(feature = "gpu-shadow")]
-pub const API_GAP: &str = "cuda-thor v0.2 public API cannot express the sheaf stencil: \
-    nvrtc_compile is private (no kernel compilation), Module::load hardcodes the \
-    kernel name \"perceive\", Module::launch hardcodes the perceive signature \
-    (f32 in/out, i32 n), DevBuf::upload accepts only &[f32] (no f64 staging), \
-    and Gpu owns exactly one stream (no second stream for the shadow)";
+pub const NOT_BUILT: &str = "unbuilt by choice (crossover bound): cuda-thor's generic API \
+    can express the sheaf stencil and has Thor-proven it, but the CPU refine costs \
+    0.268 us at the fixture's 64-node graph and 10.04 us at 4,096 nodes while one \
+    launch's pickup alone measures p50 1.1 us, so a GPU refine cannot win below \
+    ~4,096 nodes at one-shot launches — and no workload served today crosses that";
 
 /// What [`GpuShadowExecutor`]'s construction probe found, through
 /// `cuda-thor`'s public API. Recorded, not acted on beyond the
@@ -249,14 +259,14 @@ pub struct TickReceipt {
 /// context, `cuMemGetInfo` — all through cuda-thor's public API)
 /// and records the outcome. Execution is then refused, typed, on
 /// every tick: [`ExecutorError::NoGpuBackend`] when the probe
-/// found no device, [`ExecutorError::GpuApiGap`] when it found
-/// one but the API cannot express the refine stencil (see
-/// [`API_GAP`]). The executor never runs the CPU stage closures
-/// under its GPU name — a fallback that did would produce correct
-/// numbers and a false receipt, which is worse than a refusal.
-/// When cuda-thor grows the five additions specified in the
-/// README, `refine` lands on the shadow stream here and the
-/// receipts start recording [`StageRun::GpuShadow`] for it.
+/// found no device, [`ExecutorError::GpuNotBuilt`] when it found
+/// one (see [`NOT_BUILT`]). The executor never runs the CPU stage
+/// closures under its GPU name — a fallback that did would produce
+/// correct numbers and a false receipt, which is worse than a
+/// refusal. The API that would fill it exists and is Thor-proven;
+/// the fill is deferred until a workload crosses the crossover
+/// bound. When one does, `refine` lands on the shadow stream here
+/// and the receipts start recording [`StageRun::GpuShadow`] for it.
 #[cfg(feature = "gpu-shadow")]
 #[derive(Debug)]
 pub struct GpuShadowExecutor {
@@ -316,9 +326,9 @@ impl GpuShadowExecutor {
             ProbeOutcome::NoGpu { .. } => ExecutorError::NoGpuBackend {
                 backend: "gpu-two-stream-shadow",
             },
-            ProbeOutcome::GpuPresent { .. } => ExecutorError::GpuApiGap {
+            ProbeOutcome::GpuPresent { .. } => ExecutorError::GpuNotBuilt {
                 backend: "gpu-two-stream-shadow",
-                gap: API_GAP,
+                reason: NOT_BUILT,
             },
         }
     }
@@ -439,7 +449,7 @@ mod tests {
 
     #[cfg(feature = "gpu-shadow")]
     #[test]
-    fn gpu_shadow_with_gpu_refuses_on_the_api_gap_not_silently_on_cpu() {
+    fn gpu_shadow_with_gpu_refuses_as_unbuilt_not_silently_on_cpu() {
         let mut exec = GpuShadowExecutor::with_probe(ProbeOutcome::GpuPresent {
             free_bytes: 1 << 30,
             total_bytes: 2 << 30,
@@ -448,16 +458,17 @@ mod tests {
             .execute_tick(&hotspot_payload(3.0, 3.0, 7))
             .unwrap_err();
         match err {
-            ExecutorError::GpuApiGap { backend, gap } => {
+            ExecutorError::GpuNotBuilt { backend, reason } => {
                 assert_eq!(backend, "gpu-two-stream-shadow");
-                // The gap names mechanisms, not vibes: each absence
-                // below is checkable against cuda-thor's gpu.rs.
-                assert!(gap.contains("nvrtc_compile is private"), "{gap}");
-                assert!(gap.contains("\"perceive\""), "{gap}");
-                assert!(gap.contains("&[f32]"), "{gap}");
-                assert!(gap.contains("one stream"), "{gap}");
+                // The reason is the measured crossover bound, not
+                // the closed API gaps: checkable against the
+                // README's Composition section and cuda-thor's
+                // Thor-proven stencil test.
+                assert!(reason.contains("unbuilt by choice"), "{reason}");
+                assert!(reason.contains("crossover"), "{reason}");
+                assert!(reason.contains("4,096"), "{reason}");
             }
-            other => panic!("expected GpuApiGap, got {other:?}"),
+            other => panic!("expected GpuNotBuilt, got {other:?}"),
         }
         // A present GPU does not soften the capability claim, and
         // the receipt still records that no stage ran anywhere.

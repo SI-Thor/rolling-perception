@@ -190,10 +190,7 @@ impl Ledger {
             let lat = (now.saturating_sub(t_capture_us)) as f64 / 1000.0;
             latency_ms = Some(lat);
             s.verdict_latency_ms.push(lat);
-            let lineage = out
-                .tiles
-                .iter()
-                .fold(0u64, |m, t| m | t.lineage_mask);
+            let lineage = out.tiles.iter().fold(0u64, |m, t| m | t.lineage_mask);
             let mut tiles_json = String::new();
             for tv in &out.tiles {
                 if !tiles_json.is_empty() {
@@ -264,11 +261,15 @@ impl Ledger {
         t.push_str(&format!("stream_id = {}\n", self.stream_id));
         t.push_str(&format!(
             "period_ms = {}\n",
-            s.period_ms_ema.map(|v| format!("{v:.2}")).unwrap_or_else(|| "unknown".into())
+            s.period_ms_ema
+                .map(|v| format!("{v:.2}"))
+                .unwrap_or_else(|| "unknown".into())
         ));
         t.push_str(&format!(
             "jitter_ms = {}\n",
-            s.jitter_ms_ema.map(|v| format!("{v:.2}")).unwrap_or_else(|| "unknown".into())
+            s.jitter_ms_ema
+                .map(|v| format!("{v:.2}"))
+                .unwrap_or_else(|| "unknown".into())
         ));
         t.push_str(&format!("threshold = {:.4}\n", self.threshold));
         t.push_str(&format!("alpha = {:.4}\n", self.alpha));
@@ -293,7 +294,9 @@ impl Ledger {
         t.push_str(&format!("events_published = {}\n", s.events_published));
         t.push_str(&format!(
             "last_frame = {}\n",
-            s.last_frame.map(|f| f.to_string()).unwrap_or_else(|| "none".into())
+            s.last_frame
+                .map(|f| f.to_string())
+                .unwrap_or_else(|| "none".into())
         ));
         t.push_str(&format!("tiles_nominated = {}\n", s.tiles_nominated));
         t.push_str(&format!("tiles_embedded = {}\n", s.tiles_embedded));
@@ -308,21 +311,18 @@ impl Ledger {
             "rack = {}\n",
             if self.rack_up { "up" } else { "down" }
         ));
-        t.push_str(&format!("rack_started_by_me = {}\n", self.rack_started_by_me));
+        t.push_str(&format!(
+            "rack_started_by_me = {}\n",
+            self.rack_started_by_me
+        ));
         t.push_str(&format!("soak = {}\n", self.soak));
         if self.soak {
             // Precision self-report placeholders: in soak the human
             // labels arrive out of band (console lane); until then the
             // honest report is the raw counts, labelled as such.
             t.push_str("precision_self_report = placeholder (events fired and spend below; labels pending)\n");
-            t.push_str(&format!(
-                "soak_events_fired = {}\n",
-                s.events_published
-            ));
-            t.push_str(&format!(
-                "soak_spend_ratio = {:.4}\n",
-                s.spend_ratio()
-            ));
+            t.push_str(&format!("soak_events_fired = {}\n", s.events_published));
+            t.push_str(&format!("soak_spend_ratio = {:.4}\n", s.spend_ratio()));
         }
         t.push_str(&format!("updated_wall_us = {}\n", epoch_us()));
         t

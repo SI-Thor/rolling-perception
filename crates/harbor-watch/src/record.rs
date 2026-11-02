@@ -46,8 +46,7 @@ fn find_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 }
 
 fn scalar<T: std::str::FromStr>(line: &str, key: &str) -> Result<T, ParseError> {
-    let rest = find_key(line, key)
-        .ok_or_else(|| ParseError(format!("missing key \"{key}\"")))?;
+    let rest = find_key(line, key).ok_or_else(|| ParseError(format!("missing key \"{key}\"")))?;
     let end = rest
         .find(|c: char| c == ',' || c == '}' || c.is_whitespace())
         .unwrap_or(rest.len());
@@ -96,10 +95,7 @@ pub fn parse_jsonl(text: &str) -> Result<Vec<InputRecord>, ParseError> {
         if line.is_empty() {
             continue;
         }
-        out.push(
-            parse_record(line)
-                .map_err(|e| ParseError(format!("line {}: {}", i + 1, e.0)))?,
-        );
+        out.push(parse_record(line).map_err(|e| ParseError(format!("line {}: {}", i + 1, e.0)))?);
     }
     Ok(out)
 }

@@ -69,9 +69,24 @@ fn lanes(period: f64, jitter: f64, drift: f64) -> Vec<LaneTruth> {
 fn main() {
     println!("Lens-calibrated adaptive staggering vs fixed stagger");
     println!("(identical jittered traces; deterministic; logical clock, us)\n");
-    scenario("A. jitter 800us + drift +12us/cycle", &lanes(5_000.0, 800.0, 12.0), 400, 0xC0FFEE);
-    scenario("B. jitter 800us, no drift", &lanes(5_000.0, 800.0, 0.0), 400, 0xBEEF);
-    scenario("C. zero jitter, zero drift (fixed's home turf)", &lanes(5_000.0, 0.0, 0.0), 400, 0xF00D);
+    scenario(
+        "A. jitter 800us + drift +12us/cycle",
+        &lanes(5_000.0, 800.0, 12.0),
+        400,
+        0xC0FFEE,
+    );
+    scenario(
+        "B. jitter 800us, no drift",
+        &lanes(5_000.0, 800.0, 0.0),
+        400,
+        0xBEEF,
+    );
+    scenario(
+        "C. zero jitter, zero drift (fixed's home turf)",
+        &lanes(5_000.0, 0.0, 0.0),
+        400,
+        0xF00D,
+    );
 
     // Show one calibrated lens as text — the deliverable of the doctrine.
     let truth = LaneTruth {

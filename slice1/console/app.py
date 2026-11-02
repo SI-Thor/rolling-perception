@@ -115,7 +115,12 @@ def stream_events(sdir, sid):
 
     Accepts (a) frame verdicts {tick|frame, tiles[], score, line?,
     image?}, (b) wave-3 per-tile verdict rows {frame, tile, changed}
-    which are grouped per frame, (c) generic {ts, line|summary}.
+    which are grouped per frame, (c) generic {ts, line|summary},
+    (d) the watcher's own verdict rows {kind: "verdict", frame,
+    wall_us, t_capture_us, changed_tiles[], tiles: [per-tile
+    objects]} — the changed set lives in `changed_tiles` (their
+    `tiles` field is per-tile detail, not indices) and the only
+    timestamps are microsecond epochs.
     """
     rows = read_jsonl(sdir / "events.jsonl")
     events, tile_groups = [], {}
@@ -123,13 +128,20 @@ def stream_events(sdir, sid):
         if "tile" in r and ("changed" in r or "changed_raw" in r):
             tile_groups.setdefault(r.get("frame", r.get("tick", 0)), []).append(r)
             continue
-        tiles = r.get("tiles") or []
+        raw_tiles = r.get("changed_tiles")
+        if not isinstance(raw_tiles, list):
+            raw_tiles = r.get("tiles") or []
+        ts = parse_ts(r.get("ts", r.get("timestamp")))
+        if ts is None:
+            us = r.get("t_capture_us", r.get("wall_us"))
+            if isinstance(us, (int, float)):
+                ts = us / 1e6
         ev = {
             "id": f"{sid}:{r.get('tick', r.get('frame', i))}",
             "stream": sid,
-            "ts": parse_ts(r.get("ts", r.get("timestamp"))),
+            "ts": ts,
             "frame": r.get("frame", r.get("tick")),
-            "tiles": [t for t in tiles if isinstance(t, int)],
+            "tiles": [t for t in raw_tiles if isinstance(t, int)],
             "score": r.get("score", r.get("smoothed_score")),
             "jev_p": r.get("jev_p"),
             "line": r.get("line") or r.get("summary") or r.get("text"),
@@ -262,10 +274,19 @@ def api_state():
 
 @app.post("/api/correct")
 async def api_correct(req: Request):
-    body = await req.json()
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "malformed JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "JSON object body required"}, status_code=400)
     sid, eid = str(body.get("stream", "")), str(body.get("event_id", ""))
     if not sid or not eid:
         return JSONResponse({"ok": False, "error": "stream and event_id required"}, status_code=400)
+    sdir = LEDGER / "streams" / sid
+    known = {ev["id"] for ev in stream_events(sdir, sid)} if sdir.is_dir() else set()
+    if eid not in known:
+        return JSONResponse({"ok": False, "error": f"unknown event_id for stream {sid}"}, status_code=400)
     adir = LEDGER / "attention"
     adir.mkdir(parents=True, exist_ok=True)
     rec = {"ts": time.time(), "stream": sid, "event_id": eid,

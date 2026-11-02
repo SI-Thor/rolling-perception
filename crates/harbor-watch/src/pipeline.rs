@@ -129,7 +129,7 @@ pub fn grid_graph() -> SheafGraph {
             if r + 1 < GRID {
                 edges.push((t, t + GRID));
             }
-    }
+        }
     }
     SheafGraph::from_edges(TILES, edges)
 }
@@ -269,9 +269,9 @@ impl Pipeline {
             let energy_before = self.graph.energy(&scores);
             {
                 let mut lease = self.score_ring.lease();
-                lease.data_mut().copy_from_slice(
-                    &scores.iter().map(|&s| s as f32).collect::<Vec<_>>(),
-                );
+                lease
+                    .data_mut()
+                    .copy_from_slice(&scores.iter().map(|&s| s as f32).collect::<Vec<_>>());
                 lease.record_visit(NODE_REFINE);
                 lease.finalize();
             }
@@ -296,11 +296,9 @@ impl Pipeline {
                 // that. Rule: stale tiles publish *stable*; their
                 // last known smoothed score is still reported above
                 // for context, labelled stale.
-                let changed = fresh[t]
-                    && smoothed.map(|s| s >= self.cfg.threshold).unwrap_or(false);
-                let changed_raw = raw[t]
-                    .map(|s| s >= self.cfg.threshold)
-                    .unwrap_or(false);
+                let changed =
+                    fresh[t] && smoothed.map(|s| s >= self.cfg.threshold).unwrap_or(false);
+                let changed_raw = raw[t].map(|s| s >= self.cfg.threshold).unwrap_or(false);
                 {
                     let mut lease = self.publish.lease();
                     lease.data_mut()[0] = smoothed.unwrap_or(0.0) as f32;
@@ -323,7 +321,10 @@ impl Pipeline {
                     focus: focus.contains(&(t as u32)),
                     stale: !fresh[t],
                     lineage_mask: if fresh[t] {
-                        lineage_of[t] | (1 << NODE_DIRECT) | (1 << NODE_REFINE) | (1 << NODE_PUBLISH)
+                        lineage_of[t]
+                            | (1 << NODE_DIRECT)
+                            | (1 << NODE_REFINE)
+                            | (1 << NODE_PUBLISH)
                     } else {
                         0
                     },

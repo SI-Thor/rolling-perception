@@ -46,7 +46,10 @@ pub struct Manifold {
 
 impl Default for Manifold {
     fn default() -> Self {
-        Self { focus: 0, entropy: 1.0 }
+        Self {
+            focus: 0,
+            entropy: 1.0,
+        }
     }
 }
 
@@ -84,22 +87,46 @@ pub struct Lane {
 /// bit-identical inputs. No files, no RNG dependency.
 fn fill_pseudo(out: &mut [f32], mut state: u64) {
     for v in out.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let x = ((state >> 33) as u32) as f32 / u32::MAX as f32; // [0, 1)
         *v = x * 2.0 - 1.0;
     }
 }
 
 impl Lane {
-    pub fn matvec(name: &'static str, dim: usize, repeats: usize, seed: u64, updates_focus: bool) -> Self {
+    pub fn matvec(
+        name: &'static str,
+        dim: usize,
+        repeats: usize,
+        seed: u64,
+        updates_focus: bool,
+    ) -> Self {
         let mut matrix = vec![0.0f32; dim * dim];
         let mut vector = vec![0.0f32; dim];
         fill_pseudo(&mut matrix, seed);
         fill_pseudo(&mut vector, seed ^ 0x9e3779b97f4a7c15);
-        Self { name, kind: LaneKind::MatVec, dim, repeats, updates_focus, matrix, vector, pcm_interleaved: Vec::new(), channels: 0 }
+        Self {
+            name,
+            kind: LaneKind::MatVec,
+            dim,
+            repeats,
+            updates_focus,
+            matrix,
+            vector,
+            pcm_interleaved: Vec::new(),
+            channels: 0,
+        }
     }
 
-    pub fn audio(name: &'static str, samples_per_channel: usize, channels: usize, repeats: usize, seed: u64) -> Self {
+    pub fn audio(
+        name: &'static str,
+        samples_per_channel: usize,
+        channels: usize,
+        repeats: usize,
+        seed: u64,
+    ) -> Self {
         let mut pcm_interleaved = vec![0.0f32; samples_per_channel * channels];
         fill_pseudo(&mut pcm_interleaved, seed);
         // A small matvec as the "acoustic model" applied after demux.
@@ -108,7 +135,17 @@ impl Lane {
         let mut vector = vec![0.0f32; dim];
         fill_pseudo(&mut matrix, seed ^ 0x51ed);
         fill_pseudo(&mut vector, seed ^ 0xbeef);
-        Self { name, kind: LaneKind::Audio, dim, repeats, updates_focus: false, matrix, vector, pcm_interleaved, channels }
+        Self {
+            name,
+            kind: LaneKind::Audio,
+            dim,
+            repeats,
+            updates_focus: false,
+            matrix,
+            vector,
+            pcm_interleaved,
+            channels,
+        }
     }
 
     /// Execute this lane's real work once. Returns a checksum that the
@@ -127,7 +164,7 @@ impl Lane {
         let mut checksum: f64 = 0.0;
         let mut out = vec![0.0f32; dim];
         for _ in 0..self.repeats {
-            for i in 0..dim {
+            for (i, out_slot) in out.iter_mut().enumerate() {
                 // Rows are visited starting at the director's focus:
                 // the focus genuinely changes which work is done first
                 // and which values feed the checksum.
@@ -137,7 +174,7 @@ impl Lane {
                 for j in 0..dim {
                     acc += self.matrix[base + j] * self.vector[j];
                 }
-                out[i] = acc;
+                *out_slot = acc;
             }
             // Feed output back as the next vector: chained, real dataflow.
             self_chain(&mut out);
@@ -172,8 +209,8 @@ impl Lane {
             for i in 0..dim {
                 let base = i * dim;
                 let mut acc = 0.0f32;
-                for j in 0..dim {
-                    acc += self.matrix[base + j] * feats[j];
+                for (j, &feat) in feats.iter().enumerate().take(dim) {
+                    acc += self.matrix[base + j] * feat;
                 }
                 checksum += acc as f64 * 0.001;
             }
@@ -234,7 +271,10 @@ pub struct ScheduleConfig {
 
 impl Default for ScheduleConfig {
     fn default() -> Self {
-        Self { cycles: 20, sensor_stagger: Duration::from_micros(400) }
+        Self {
+            cycles: 20,
+            sensor_stagger: Duration::from_micros(400),
+        }
     }
 }
 
@@ -389,7 +429,10 @@ mod tests {
     use super::*;
 
     fn test_cfg() -> ScheduleConfig {
-        ScheduleConfig { cycles: 10, sensor_stagger: Duration::from_micros(300) }
+        ScheduleConfig {
+            cycles: 10,
+            sensor_stagger: Duration::from_micros(300),
+        }
     }
 
     #[test]

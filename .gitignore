@@ -1,6 +1,9 @@
 /target
 **/target
 *.o
+__pycache__/
+*.pyc
+.env
 experiments/thor-cuda/exp1
 experiments/thor-cuda/exp1b
 experiments/thor-cuda/exp2_nvrtc_swap

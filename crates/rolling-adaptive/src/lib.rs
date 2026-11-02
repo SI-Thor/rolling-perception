@@ -149,8 +149,8 @@ impl LensFile {
             } else {
                 let dev = interval - self.est_period_us;
                 self.est_period_us += self.alpha * dev;
-                self.jitter_var_us2 = (1.0 - self.alpha) * self.jitter_var_us2
-                    + self.alpha * dev * dev;
+                self.jitter_var_us2 =
+                    (1.0 - self.alpha) * self.jitter_var_us2 + self.alpha * dev * dev;
             }
         }
         self.last_arrival_us = Some(arrival_us);
@@ -192,9 +192,7 @@ impl LensFile {
                 "nominal_period_us" => lens.as_mut()?.nominal_period_us = v.parse().ok()?,
                 "est_period_us" => lens.as_mut()?.est_period_us = v.parse().ok()?,
                 "jitter_std_us" => jitter_std = v.parse().ok()?,
-                "last_phase_error_us" => {
-                    lens.as_mut()?.last_phase_error_us = v.parse().ok()?
-                }
+                "last_phase_error_us" => lens.as_mut()?.last_phase_error_us = v.parse().ok()?,
                 "observations" => lens.as_mut()?.observations = v.parse().ok()?,
                 _ => return None,
             }
@@ -230,8 +228,8 @@ pub fn gen_trace(truth: &LaneTruth, cycles: usize, seed: u64) -> Vec<f64> {
     for k in 0..cycles {
         if k > 0 {
             let period_k = truth.period_us + truth.drift_us_per_cycle * (k as f64 - 1.0);
-            let interval = (period_k + rng.next_gaussian() * truth.jitter_std_us)
-                .max(0.1 * truth.period_us);
+            let interval =
+                (period_k + rng.next_gaussian() * truth.jitter_std_us).max(0.1 * truth.period_us);
             t += interval;
         }
         out.push(t);
@@ -309,7 +307,11 @@ pub fn percentile(sorted: &[f64], q: f64) -> f64 {
 pub fn stats(errs: &[f64]) -> (f64, f64, f64) {
     let mut s = errs.to_vec();
     s.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    (percentile(&s, 0.50), percentile(&s, 0.95), percentile(&s, 0.99))
+    (
+        percentile(&s, 0.50),
+        percentile(&s, 0.95),
+        percentile(&s, 0.99),
+    )
 }
 
 // -------------------------------------------------------- executor simulate
@@ -373,16 +375,16 @@ pub struct SimResult {
 /// claim under test.
 pub fn simulate(mut items: Vec<Item>, params: ExecParams) -> SimResult {
     // Stage per lane, in sample order.
-    items.sort_by(|a, b| {
-        a.lane
-            .cmp(&b.lane)
-            .then(a.k.cmp(&b.k))
-    });
+    items.sort_by(|a, b| a.lane.cmp(&b.lane).then(a.k.cmp(&b.k)));
     let mut stage_done = vec![0.0f64; items.len()];
     {
-        let mut stager_free: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+        let mut stager_free: std::collections::HashMap<usize, f64> =
+            std::collections::HashMap::new();
         for (idx, it) in items.iter().enumerate() {
-            let free_at = stager_free.get(&it.lane).copied().unwrap_or(f64::NEG_INFINITY);
+            let free_at = stager_free
+                .get(&it.lane)
+                .copied()
+                .unwrap_or(f64::NEG_INFINITY);
             let start = (it.predicted_us - params.prep_us).max(free_at);
             let mut done = start + params.prep_us;
             if it.arrival_us - it.predicted_us > params.prep_expiry_us {
@@ -401,7 +403,10 @@ pub fn simulate(mut items: Vec<Item>, params: ExecParams) -> SimResult {
         let rb = items[b].arrival_us.max(stage_done[b]);
         ra.partial_cmp(&rb).unwrap()
     });
-    let t_start = items.iter().map(|i| i.arrival_us).fold(f64::INFINITY, f64::min);
+    let t_start = items
+        .iter()
+        .map(|i| i.arrival_us)
+        .fold(f64::INFINITY, f64::min);
     let mut free = f64::NEG_INFINITY;
     let mut fresh = 0usize;
     let mut lat_sum = 0.0;
@@ -450,7 +455,12 @@ pub fn build_items(
             // k = 0 has no prediction; stage it at its arrival (both
             // schedulers get this for free, identically).
             let predicted = preds[k].unwrap_or(t);
-            items.push(Item { lane, k, arrival_us: t, predicted_us: predicted });
+            items.push(Item {
+                lane,
+                k,
+                arrival_us: t,
+                predicted_us: predicted,
+            });
         }
     }
     (items, all_errs)
@@ -531,7 +541,10 @@ mod tests {
             "adaptive p95 {adap_p95:.0}us must beat fixed p95 {fixed_p95:.0}us"
         );
         // And by a wide margin on this trace (drift dominates fixed).
-        assert!(adap_p95 < 0.5 * fixed_p95, "adap {adap_p95:.0} vs fixed {fixed_p95:.0}");
+        assert!(
+            adap_p95 < 0.5 * fixed_p95,
+            "adap {adap_p95:.0} vs fixed {fixed_p95:.0}"
+        );
     }
 
     #[test]

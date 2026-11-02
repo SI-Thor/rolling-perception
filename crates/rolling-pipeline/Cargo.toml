@@ -22,10 +22,12 @@ default = []
 # The two-stream-shadow GPU executor (see src/executor.rs). With the
 # feature on, GpuShadowExecutor links cuda-thor, probes the device at
 # construction, and records a placement receipt per attempted tick.
-# It still executes NO tick: cuda-thor's public API (v0.2) cannot
-# express a custom kernel launch (see API_GAP in src/executor.rs and
-# the README's Composition section), so every tick is refused with a
-# typed error naming the blocker — NoGpuBackend when no device is
-# present, GpuApiGap when one is. OFF by default; CPU builds are
-# unaffected either way.
+# It still executes NO tick — by choice, not by blockage: cuda-thor's
+# generic API can express the fill and has Thor-proven the stencil,
+# but the measured crossover bound puts any GPU-refine win above
+# ~4,096 nodes (see NOT_BUILT in src/executor.rs and the README's
+# Composition section), so every tick is refused with a typed error
+# naming the state — NoGpuBackend when no device is present,
+# GpuNotBuilt when one is. OFF by default; CPU builds are unaffected
+# either way.
 gpu-shadow = ["dep:cuda-thor"]

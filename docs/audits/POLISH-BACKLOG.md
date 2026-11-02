@@ -83,3 +83,50 @@ effort, and file:line evidence in its audit file.
 - Nothing on this list changes the soak, which is mid-flight until
   2026-11-03 18:18 AKST. Items touching the running deployment
   wait for the verdict.
+
+## Worked — 2026-11-02 (POLISH-FIX lane)
+
+Cheap blockers and majors, worked the same day the backlog was
+written. Verified at the end: **107 passed / 0 failed**,
+`cargo clippy --workspace --all-targets` zero warnings,
+`cargo fmt --all -- --check` clean.
+
+- **Blocker 2 (licence) — FIXED.** `LICENSE` + `LICENSE-MIT` +
+  `LICENSE-APACHE` at the root (Apache text verified section by
+  section against apache.org's canonical copy); all 7 crates'
+  `license = "MIT OR Apache-2.0"` fields checked, matching.
+- **Major 5 (.gitignore half) — FIXED.** `__pycache__/`, `*.pyc`,
+  `.env` added. The history scrub of the already-tracked blobs is
+  **deferred to flip time by design** — reminder recorded in
+  AUDIT-OPS.md's addendum.
+- **Major 4 (executor rationale) — FIXED.** `GpuApiGap`/`API_GAP`
+  are gone: the error is now `ExecutorError::GpuNotBuilt` carrying
+  `NOT_BUILT` — the measured crossover bound (no win below ~4,096
+  nodes), with the closed gaps recorded as closed. Same correction
+  in executor.rs docs, the gpu-shadow tests, rolling-pipeline's
+  Cargo.toml feature comment, and the README Composition section
+  (the five-absences list kept, fenced as history). Feature-on
+  type-check passes; the behavioural refusal is unchanged.
+- **Major 9 (fmt drift) — FIXED.** `cargo fmt --all` applied
+  workspace-wide; the full suite stayed green (107) afterwards,
+  so no file needed backing out. The "nothing stops it returning"
+  half (no CI) remains open — it is a repo-settings item, not a
+  formatting one.
+- **Major 13 (stale numbers) — FIXED for the cited lines.**
+  README + READING-GUIDE cold-run lines: 95 → 107 tests. RESULTS:
+  the fMP4 row now records the wired reality with the original
+  wording kept as a dated correction; the soak row's +50 min
+  snapshot is fenced as a point-in-time live-ledger read
+  (2026-11-01 ≈19:08 AKST) with its real source named and the
+  "0 events" supersession noted. (AUDIT-DOCS items N5–N10 were
+  outside this lane's brief and remain as listed.)
+- **Clippy warnings (AUDIT-ENGINE item 5) — FIXED.** All four:
+  `needless_range_loop` ×2 in rolling-perception (iterator forms,
+  same order/counts — checksum suite green), harbor-watch's
+  `manual_pattern_char_comparison`, confluence-watch's
+  `manual_flatten`. Workspace clippy is at zero; substrate-core
+  and cuda-thor re-verified clean under `-D warnings`.
+
+Not touched by this lane (still open, as listed above): blocker 1
+(install pack), blocker 3 (player frame floor), majors 6–8 and
+10–12, and the whole spec-debt menu.

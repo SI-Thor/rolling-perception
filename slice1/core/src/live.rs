@@ -185,8 +185,7 @@ impl LivePipeline {
             };
             // The publish rule (batch-identical): a change verdict is
             // a claim about THIS frame — stale tiles publish stable.
-            let changed =
-                fresh[t] && smoothed.map(|s| s >= self.cfg.threshold).unwrap_or(false);
+            let changed = fresh[t] && smoothed.map(|s| s >= self.cfg.threshold).unwrap_or(false);
             let changed_raw = raw[t].map(|s| s >= self.cfg.threshold).unwrap_or(false);
             {
                 let mut lease = self.publish.lease();

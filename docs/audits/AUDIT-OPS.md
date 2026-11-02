@@ -250,3 +250,17 @@ not this project's: 0.04%).
   processes (1 unkillable); ~15 MB scratch deployments;
   project disk 308 MB.
 - Local: 1 live tree (staging) + 11 stale lane dirs.
+
+## Addendum (2026-11-02, POLISH-FIX lane)
+
+- The `.gitignore` half of the tracked-bytecode item is fixed
+  (`__pycache__/`, `*.pyc`, `.env` added). **Reminder for flip
+  time: the ≥10 `__pycache__/*.pyc` blobs already in git history
+  still need a history scrub before the public flip** — removing
+  them at HEAD is not enough; schedule the rewrite with the flip,
+  not before (the repo is private and the blobs carry only
+  build-machine paths). Not attempted by the polish lane.
+- The licence blocker is closed: `LICENSE`, `LICENSE-MIT`, and
+  `LICENSE-APACHE` (canonical text, verified against apache.org)
+  now sit at the repo root; all seven crates' `license` fields
+  already read `"MIT OR Apache-2.0"` and match.

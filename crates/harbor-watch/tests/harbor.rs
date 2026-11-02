@@ -35,7 +35,12 @@ fn fixture_script_and_ground_truth() {
 #[test]
 fn cut_detected_at_the_cut_frame_not_before_not_after() {
     let (_fx, out) = run_fixture();
-    let changed_frames: Vec<u32> = out.frames.iter().filter(|f| f.changed).map(|f| f.frame).collect();
+    let changed_frames: Vec<u32> = out
+        .frames
+        .iter()
+        .filter(|f| f.changed)
+        .map(|f| f.frame)
+        .collect();
     assert_eq!(
         changed_frames,
         vec![CUT_FRAME],
@@ -48,8 +53,16 @@ fn cut_detected_at_the_cut_frame_not_before_not_after() {
 #[test]
 fn gradual_drift_is_not_flagged_as_a_cut() {
     let (_fx, out) = run_fixture();
-    for v in out.tiles.iter().filter(|v| v.tile == DRIFT_TILE && v.frame >= 8) {
-        assert!(!v.changed_raw, "drift tile raw-flagged at frame {}", v.frame);
+    for v in out
+        .tiles
+        .iter()
+        .filter(|v| v.tile == DRIFT_TILE && v.frame >= 8)
+    {
+        assert!(
+            !v.changed_raw,
+            "drift tile raw-flagged at frame {}",
+            v.frame
+        );
         assert!(!v.changed, "drift tile flagged at frame {}", v.frame);
         assert!(
             v.raw_score.unwrap() < 0.25,
@@ -122,10 +135,20 @@ fn full_1280_dimension_is_carried_not_truncated() {
     let fx = fixture::generate(1280, 7);
     let out = run_records(&fx.records, Config::default());
     assert_eq!(out.dim, 1280);
-    assert_eq!(out.ingest_dim, 1280, "ingest ring must carry the full embedding");
-    assert_eq!(out.decide_dim, 1281, "decide ring carries score + full embedding");
     assert_eq!(
-        out.frames.iter().find(|f| f.frame == CUT_FRAME).unwrap().changed_tiles,
+        out.ingest_dim, 1280,
+        "ingest ring must carry the full embedding"
+    );
+    assert_eq!(
+        out.decide_dim, 1281,
+        "decide ring carries score + full embedding"
+    );
+    assert_eq!(
+        out.frames
+            .iter()
+            .find(|f| f.frame == CUT_FRAME)
+            .unwrap()
+            .changed_tiles,
         CUT_TILES.to_vec()
     );
 }
@@ -150,15 +173,22 @@ fn changed_strategy_file_stale_tiles_and_compare() {
     // 3, 5… — produce no verdicts: the pipeline cannot know a frame
     // existed from an empty file. That gap is a property of the
     // strategy's data, stated here rather than papered over.)
-    assert!(ch.tiles.iter().any(|v| v.stale && v.frame == CUT_FRAME && v.tile == 0));
-    assert!(ch.tiles.iter().all(|v| v.frame == 0 || v.frame == CUT_FRAME || v.frame == SPIKE_FRAME));
-    // The cut is still detected in the sparse file.
     assert!(ch
-        .frames
+        .tiles
         .iter()
-        .find(|f| f.frame == CUT_FRAME)
-        .unwrap()
-        .changed);
+        .any(|v| v.stale && v.frame == CUT_FRAME && v.tile == 0));
+    assert!(ch
+        .tiles
+        .iter()
+        .all(|v| v.frame == 0 || v.frame == CUT_FRAME || v.frame == SPIKE_FRAME));
+    // The cut is still detected in the sparse file.
+    assert!(
+        ch.frames
+            .iter()
+            .find(|f| f.frame == CUT_FRAME)
+            .unwrap()
+            .changed
+    );
     let rep = ablation::compare(&all, &ch, &fx.records, &ch_records);
     assert_eq!(rep.reference_frame, Some(CUT_FRAME));
     // CHANGED holds all its frame-4 data earlier (its last frame-4
@@ -171,4 +201,3 @@ fn changed_strategy_file_stale_tiles_and_compare() {
     );
     assert_eq!(rep.frame_agreement, 1.0);
 }
-

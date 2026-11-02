@@ -159,7 +159,9 @@ pub fn run(cfg: &Config) -> Result<Summary, String> {
     let mut line = String::new();
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).map_err(|e| format!("read ingest: {e}"))?;
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("read ingest: {e}"))?;
         if n == 0 {
             break; // ingest EOF: clean end of stream
         }
@@ -193,10 +195,16 @@ pub fn run(cfg: &Config) -> Result<Summary, String> {
                     let embedded = recs.len() as u64;
                     let pending_now = frames_received - frames_processed - 1;
                     let out = p.process_frame(frame, recs);
-                    if let Some(lat) =
-                        ledger
-                            .record_frame(&out, t_capture_us, nominated, embedded, &emb_ms, pending_now)
-                            .map_err(|e| format!("ledger write: {e}"))?
+                    if let Some(lat) = ledger
+                        .record_frame(
+                            &out,
+                            t_capture_us,
+                            nominated,
+                            embedded,
+                            &emb_ms,
+                            pending_now,
+                        )
+                        .map_err(|e| format!("ledger write: {e}"))?
                     {
                         verdict_latencies.push(lat);
                     }
@@ -212,9 +220,7 @@ pub fn run(cfg: &Config) -> Result<Summary, String> {
                 if cfg.max_frames > 0 && frames_processed >= cfg.max_frames as u64 {
                     break;
                 }
-                if !cfg.stop_file.is_empty()
-                    && std::path::Path::new(&cfg.stop_file).exists()
-                {
+                if !cfg.stop_file.is_empty() && std::path::Path::new(&cfg.stop_file).exists() {
                     eprintln!("[confluence-watch] stop file seen; shutting down");
                     break;
                 }
@@ -246,8 +252,7 @@ pub fn run(cfg: &Config) -> Result<Summary, String> {
     summary.embed_everything_estimate_s = ledger.stats.embed_everything_estimate_s();
     let (p50, _) = crate::ledger::percentiles(&verdict_latencies);
     summary.verdict_latency_p50_ms = p50;
-    summary.verdict_latency_max_ms =
-        verdict_latencies.iter().cloned().fold(0.0, f64::max);
+    summary.verdict_latency_max_ms = verdict_latencies.iter().cloned().fold(0.0, f64::max);
     summary.rack_started_by_me = rack_started_by_me;
 
     // ---- rack lifecycle: restore as found

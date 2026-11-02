@@ -22,7 +22,10 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 fn tempdir(tag: &str) -> String {
-    let d = std::env::temp_dir().join(format!("confluence-watch-test-{tag}-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!(
+        "confluence-watch-test-{tag}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d.to_string_lossy().to_string()
@@ -91,9 +94,7 @@ fn ledger_files_and_lineage() {
         let n = recs.len() as u64;
         let out = live.process_frame(frame, recs);
         let emb_ms: Vec<f64> = (0..n).map(|_| 173.0).collect();
-        ledger
-            .record_frame(&out, now, 16, n, &emb_ms, 0)
-            .unwrap();
+        ledger.record_frame(&out, now, 16, n, &emb_ms, 0).unwrap();
     }
     let state = std::fs::read_to_string(format!("{dir}/state.txt")).unwrap();
     assert!(state.contains("embeds_spent_s"), "{state}");
@@ -110,8 +111,16 @@ fn ledger_files_and_lineage() {
         .filter(|l| l.contains("\"kind\":\"verdict\""))
         .collect();
     assert_eq!(verdicts.len(), 1, "only the cut frame publishes: {events}");
-    assert!(verdicts[0].contains("\"lineage_mask\":31"), "{}", verdicts[0]);
-    assert!(verdicts[0].contains("verdict_latency_ms"), "{}", verdicts[0]);
+    assert!(
+        verdicts[0].contains("\"lineage_mask\":31"),
+        "{}",
+        verdicts[0]
+    );
+    assert!(
+        verdicts[0].contains("verdict_latency_ms"),
+        "{}",
+        verdicts[0]
+    );
 }
 
 /// A one-shot HTTP responder that answers 200 to everything: stands
@@ -124,12 +133,10 @@ fn stub_rack() -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            if let Ok(mut s) = stream {
-                let mut buf = [0u8; 512];
-                let _ = s.read(&mut buf);
-                let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
-            }
+        for mut s in listener.incoming().flatten() {
+            let mut buf = [0u8; 512];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
         }
     });
     format!("http://{addr}")
@@ -173,8 +180,7 @@ fn service_end_to_end_via_ingest_interface() {
     assert_eq!(summary.events, 1, "only the cut publishes");
     assert!(!summary.rack_started_by_me);
     assert!(!summary.rack_stopped_by_me);
-    let events =
-        std::fs::read_to_string(format!("{dir}/ledger/events.jsonl")).unwrap();
+    let events = std::fs::read_to_string(format!("{dir}/ledger/events.jsonl")).unwrap();
     assert!(events.contains("\"frame\":4"), "{events}");
     assert!(events.contains("\"changed_tiles\":[3, 7, 11]"), "{events}");
     let health = std::fs::read_to_string(format!("{dir}/ledger/health.txt")).unwrap();

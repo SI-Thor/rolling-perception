@@ -72,12 +72,17 @@ fn load_truth(path: &str) -> BTreeMap<(u32, u32), bool> {
         }
         let get = |k: &str| -> u32 {
             let pat = format!("\"{k}\":");
-            let at = line.find(&pat).unwrap_or_else(|| panic!("truth line missing {k}: {line}"));
+            let at = line
+                .find(&pat)
+                .unwrap_or_else(|| panic!("truth line missing {k}: {line}"));
             let rest = &line[at + pat.len()..];
-            let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
+            let end = rest.find([',', '}']).unwrap_or(rest.len());
             rest[..end].trim().parse().expect("truth number")
         };
-        m.insert((get("frame"), get("tile")), line.contains("\"changed\":true"));
+        m.insert(
+            (get("frame"), get("tile")),
+            line.contains("\"changed\":true"),
+        );
     }
     m
 }
@@ -95,8 +100,12 @@ fn main() {
     };
 
     if let Some(path) = opt(&args, "--make-fixture") {
-        let dim: usize = opt(&args, "--dim").map(|s| s.parse().expect("--dim")).unwrap_or(1280);
-        let seed: u64 = opt(&args, "--seed").map(|s| s.parse().expect("--seed")).unwrap_or(7);
+        let dim: usize = opt(&args, "--dim")
+            .map(|s| s.parse().expect("--dim"))
+            .unwrap_or(1280);
+        let seed: u64 = opt(&args, "--seed")
+            .map(|s| s.parse().expect("--seed"))
+            .unwrap_or(7);
         let fx = fixture::generate(dim, seed);
         let mut out = String::new();
         for r in &fx.records {
@@ -136,7 +145,10 @@ fn main() {
         let mut rep = ablation::compare(&all_out, &ch_out, &all_recs, &ch_recs);
         rep.wall_all_ms = wall_all;
         rep.wall_changed_ms = wall_ch;
-        let us = |v: Option<u64>| v.map(|x| x.to_string()).unwrap_or_else(|| "\"missed\"".into());
+        let us = |v: Option<u64>| {
+            v.map(|x| x.to_string())
+                .unwrap_or_else(|| "\"missed\"".into())
+        };
         println!(
             "{{\"reference_frame\":{},\"ttfc_all_us\":{},\"ttfc_changed_us\":{},\"wall_all_ms\":{:.3},\"wall_changed_ms\":{:.3},\"records_all\":{},\"records_changed\":{},\"tile_agreement\":{:.4},\"tile_pairs\":{},\"frame_agreement\":{:.4},\"frame_pairs\":{}}}",
             rep.reference_frame

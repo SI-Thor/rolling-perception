@@ -34,7 +34,7 @@ receipts. Simulated numbers never appear here.
 | Gradual drift | silent (correct) | `slice1/README.md` |
 | Spend vs embed-everything (staged) | ratio **0.118** | `slice1/README.md` |
 | Live camera (ProArt, outbound push) | gate 3.0; 1,200 still frames → **0 steady-state nominations**, 0 events; sensitivity replay still exact | `slice1/PROART-CAMERA.md` |
-| 48 h soak | **running** 2026-11-01 18:18 → 2026-11-03 18:18 AKST; at +50 min: 5,431 frames, 0 events, spend ratio 0.0002, `silence_meaningful = true` | `slice1/PROART-CAMERA.md` |
+| 48 h soak | **running** 2026-11-01 18:18 → 2026-11-03 18:18 AKST. Point-in-time snapshot at +50 min (2026-11-01 ≈19:08 AKST), read live from the soak ledger's `state.txt` on the Thor — not from the cited doc, whose own figures are the calibration run and the hour-1.3 snapshot: 5,431 frames, 0 events *at that moment*, spend ratio 0.0002, `silence_meaningful = true`. The "0 events" was superseded inside the same soak by the arrival episode the cited doc records (events 43→48 that evening; 393 by ~22:13 AKST) | live ledger read, 2026-11-01 19:08 AKST; narrative in `slice1/PROART-CAMERA.md` |
 
 ## Slice 2 — serve + presence
 
@@ -42,7 +42,7 @@ receipts. Simulated numbers never appear here.
 |---|---|---|
 | NVENC sessions | 64/64 H.264 opened, **no cap found**; the cap is aggregate **~580–640 fps** of 1080p | `slice2/NVENC-BENCH.md` |
 | Realtime transcodes | hold through 16, break at 24 → promise 8, engineer 12, hard cap 16 | `slice2/NVENC-BENCH.md` |
-| GStreamer V4L2 H.265 vs ffmpeg nvenc | **530–740 fps vs ~209 (2.5–3.5× cheaper)** — but H.265-in-TS is outside Apple's HLS spec; the player ships H.264 until an fMP4 path exists | `slice2/NVENC-BENCH.md`, `slice2/player/README.md` |
+| GStreamer V4L2 H.265 vs ffmpeg nvenc | **530–740 fps vs ~209 (2.5–3.5× cheaper)** — but H.265-in-TS is outside Apple's HLS spec. *Correction (2026-11-02): this row originally ended "the player ships H.264 until an fMP4 path exists" — the fMP4 path now exists and is a production player mode: HEVC items serve fragmented-MP4 HLS by remux at **0 encode-fps**, with the 41-check validation passing end-to-end; the claim stays fenced at "spec-conformant by checklist + probe" (no Apple client has played it).* | `slice2/NVENC-BENCH.md`, `slice2/player/RESULTS.md`, `slice2/player/fmp4-spike/RESULTS.md` |
 | Contention (transcode × embeds) | embed p99 170 → 251 ms; transcode −36%; graceful both ways | `slice2/NVENC-BENCH.md` |
 | Player | remux 141/141 frames at 0 fps draw; transcode 1800/1800 at 138 fps draw; budget refusal 429 at cap while remux still serves; watchdog kills a stalled source and marks it failed | `slice2/player/RESULTS.md` |
 | Presence brain (already on disk) | Qwen3-Coder-30B-A3B: grounded all content questions, refused the trick with reasoning; 65 tok/s | `slice2/BRAIN-BENCH.md` |

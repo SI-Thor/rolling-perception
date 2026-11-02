@@ -34,7 +34,7 @@ deficits included at the same prominence as the wins.
 claim→proof tracing, invariants ledger.
 
 **Run it cold, on any machine (two minutes):** `cargo test --release`
-at the repo root runs all **95 tests** — including the wave-3
+at the repo root runs all **107 tests** — including the wave-3
 cascade and the Slice-1 live service replayed over a generated
 fixture (`harbor_watch::fixture`), no camera, rack or Thor
 required — and the bench in *Quickstart* below shows rolling
