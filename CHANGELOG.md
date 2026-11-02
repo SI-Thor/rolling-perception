@@ -6,6 +6,15 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — TELLTAPE PUBLISHED, 2026-11-02
+
+- The extracted change-ledger core is public:
+  https://github.com/SuperInstance/telltape — new repo, clean
+  history, tagged v0.1.0, verified from the tag artifact
+  (fresh clone of the tag: 93 passed, 0 failed). The flagship
+  soak example ships marked in-progress by Casey's choice to
+  publish now; it completes with the 2026-11-03 verdict.
+
 ## [Unreleased] — extraction rulings, 2026-11-02
 
 - EXTRACTION-PLAN §10: Casey's five answers recorded — standalone
