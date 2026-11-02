@@ -15,6 +15,10 @@ its test or marked unproven, and the per-crate invariants ledger.
    proposal keep/fix/drop; `DESIGN.md` is the architecture that
    survived grading. `docs/FEASIBILITY.md` + `docs/THOR-VERIFICATION.md`
    record what the Thor (sm_110, 20 SMs) actually does, measured.
+   **Run alongside this stop:** the README's Quickstart —
+   `cargo test --release` (95 tests; the wave-3 cascade and the
+   Slice-1 live service both run cold over a generated fixture,
+   no Thor or camera needed) and the one-command bench.
 2. **The engine** — `crates/` (see *Crates* below) and `docs/WAVE3.md`:
    rolling vs batched, the substrate rings, NVRTC hot-swap from Rust,
    adaptive staggering, and the first real workload.
@@ -32,7 +36,12 @@ its test or marked unproven, and the per-crate invariants ledger.
    `docs/panel-1/` and `slice2/panel-2/`. Round 1 cost $0.034,
    round 2 $0.054 — and round 2's cache design failed honestly
    (caching is per-model; one question per model never reuses a
-   prefix), which is recorded rather than hidden.
+   prefix), which is recorded rather than hidden. Round 3 is
+   `docs/SPEC-PANEL-3.md` (raw answers in `docs/panel-3/`): the
+   ring fork, the chatty gate, allocation policy, and the
+   graduation bar — $0.1085, and its Q1 convergence was
+   superseded by measurement the same night (referee addendum
+   in the synthesis).
 5. **The measured results** — `docs/RESULTS.md`: every headline
    number in one ledger, each pointing at its source document,
    with the deficits section kept as prominently as the wins.
@@ -61,7 +70,7 @@ its test or marked unproven, and the per-crate invariants ledger.
   state beats held samples 8–18× for late readers; snap rule v2
   with a decontaminated band).
 
-## Crates (the engine, 95 workspace tests)
+## Crates (the engine, 107 workspace tests)
 
 | crate | what it is |
 |---|---|

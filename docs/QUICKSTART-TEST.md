@@ -1,8 +1,13 @@
 # QUICKSTART-TEST — literal follow-through, on the Thor
 
-> **Update note (2026-11-01, doc sweep):** dated pass record. The
-> "29 tests" figures below describe the workspace as it stood during
-> this pass; it has since grown to **55 tests** across seven members.
+> **Update note (2026-11-01, doc sweep; corrected in the
+> rehearsal pass the same night):** dated pass record. The
+> "29 tests" figures below describe the workspace as it stood
+> during this pass; it has since grown to **95 tests** across
+> seven members, and slices 1–3 have landed. This document
+> remains the record of the wave-2 engine quickstart only —
+> the current front door is the README's Quickstart, re-verified
+> cold on a fresh clone in `slice1/install/REHEARSAL-LOG.md`.
 
 Method: the repo (staging tree = commit `d528ba5` content) was copied
 to the Thor at `~/rolling-perception-play/quickstart-test/` and a

@@ -33,6 +33,16 @@ deficits included at the same prominence as the wins.
 **The engine's own book is `docs/ARCHITECTURE.md`** — crate map,
 claim→proof tracing, invariants ledger.
 
+**Run it cold, on any machine (two minutes):** `cargo test --release`
+at the repo root runs all **95 tests** — including the wave-3
+cascade and the Slice-1 live service replayed over a generated
+fixture (`harbor_watch::fixture`), no camera, rack or Thor
+required — and the bench in *Quickstart* below shows rolling
+beating batched on your own hardware. That is the stranger's
+path; the rest of this repo is the record of how it was proven
+on the Thor (a fresh-clone rehearsal of this door is logged in
+`slice1/install/REHEARSAL-LOG.md`).
+
 ## Prerequisites
 
 - **Rust, stable, edition 2021** (developed/tested on rustc 1.99.1; any
@@ -42,10 +52,13 @@ claim→proof tracing, invariants ledger.
   CUDA 13.2 (`nvcc`). The Rust workspace builds and tests anywhere,
   including x86_64.
 
-## Quickstart (tested literally on the Thor — see QUICKSTART-TEST notes)
+## Quickstart (tested literally — the Rust half on any machine; the Thor pass is `docs/QUICKSTART-TEST.md`, a dated wave-2 record)
 
-On the Thor over SSH, `cargo` and `nvcc` are **not on the default
-(non-login) PATH**. Set this first, or every command below fails with
+The Rust workspace below runs verbatim on a desktop machine —
+it was re-verified cold on a plain dev VM from a fresh clone
+(`slice1/install/REHEARSAL-LOG.md`). On the Thor over SSH,
+`cargo` and `nvcc` are **not on the default (non-login) PATH**.
+Set this first, or every command below fails with
 `command not found`:
 
 ```sh
@@ -56,25 +69,26 @@ From the **repository root**:
 
 ```sh
 cargo test --release
-# expect: 95 passed total — 6 (rolling-perception) + 47 (rolling-substrate-core:
+# expect: 107 passed total — 6 (rolling-perception) + 55 (rolling-substrate-core:
 #         unit + seeded property tests + sheaf allocation proofs + the §3.2
-#         SPSC ring) + 13 (rolling-pipeline: incl. the 1M-message ring stress
-#         proof) + 6 (rolling-adaptive)
+#         SPSC ring + the D9/D10 sheaf refusals) + 17 (rolling-pipeline: incl.
+#         the 1M-message ring stress proof + replay bit-identity) + 6 (rolling-adaptive)
 #         + 12 (cuda-thor CPU: reference + property + the generic launch API;
 #         its GPU tests need the Thor, see crates/cuda-thor)
 #         + 8 (harbor-watch, the wave-3 real-workload crate) + 3 (slice1/core: confluence-watch live service)
 
 cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
-# expect two lines (batched, rolling) ending with:
+# expect two passes — a measured pass and a reported pass — each
+# printing a batched and a rolling line, ending with:
 #   ttfo ratio (batched / rolling): <roughly 3x-16x, machine-dependent>
 #   checksum delta |batched - rolling|: 0.000000
 # Both schedulers' checksum is 345101.1999 on x86_64 and aarch64.
 ```
 
 Scope, because the same words do different things in different folders:
-`cargo test` at the root tests **all** crates (95 tests); inside
+`cargo test` at the root tests **all** crates (107 tests); inside
 `crates/rolling-perception/` it tests 6; inside
-`crates/rolling-substrate-core/` it tests 47. `cargo run` needs
+`crates/rolling-substrate-core/` it tests 55. `cargo run` needs
 `-p rolling-perception` at the root (or run it from that crate's folder).
 
 ### CUDA experiments (Thor only)

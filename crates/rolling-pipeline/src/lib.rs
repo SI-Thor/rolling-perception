@@ -300,6 +300,21 @@ pub struct Published {
     pub sheaf_energy_before: f64,
     pub sheaf_energy_after: f64,
     pub data: Vec<f32>,
+    /// The gating contract's reporting half (PLAN §5.2 / DESIGN §5,
+    /// ARCHITECTURE P5): for each grid cell, row-major, the tick at
+    /// which the gated stage (`perceive`) last computed it. A cell
+    /// the gate has never skipped reads this payload's own tick
+    /// once computed; tick 0's full-frame gate computes every cell,
+    /// so after any publish every entry is a genuine last-computed
+    /// tick (there is no "never computed" case to encode).
+    pub last_computed_tick: Vec<u64>,
+    /// For each grid cell, row-major: `true` iff THIS tick's gate
+    /// skipped the cell — it is reported `stale_by_gate`, its value
+    /// carried from the tick in
+    /// [`Published::last_computed_tick`]. The pair is the snapshot's
+    /// staleness record: exactly the cells outside `gate_used` are
+    /// marked, each with the tick that last computed it.
+    pub stale_by_gate: Vec<bool>,
 }
 
 /// One tick's output plus its per-stage wall durations, in cascade
@@ -346,6 +361,12 @@ pub struct Pipeline {
     gate: Viewport,
     tick: u64,
     pub ops: Ops,
+    /// Per-cell tick at which `perceive` last computed the cell —
+    /// the state behind [`Published::last_computed_tick`] (P5).
+    /// Updated from each tick's `gate_used` right after `perceive`
+    /// runs; tick 0's full-frame gate initialises every cell to 0
+    /// by computing it.
+    tile_last_computed: [u64; DIM],
 }
 
 impl Default for Pipeline {
@@ -380,6 +401,7 @@ impl Pipeline {
             gate: Viewport::full(WIDTH as u32, HEIGHT as u32),
             tick: 0,
             ops: Ops::default(),
+            tile_last_computed: [0; DIM],
         }
     }
 
@@ -448,6 +470,27 @@ impl Pipeline {
         );
         stage_durations[STAGE_PERCEIVE] = t.elapsed();
 
+        // P5 stale-marking: perceive has now computed exactly the
+        // cells inside `gate_used` on this tick (gated_apply's
+        // contract, counter-checked inside the stage). Stamp those
+        // cells with this tick; every other cell keeps the tick
+        // that last computed it and is reported stale-by-gate in
+        // this tick's snapshot.
+        let mut last_computed_tick = Vec::with_capacity(DIM);
+        let mut stale_by_gate = Vec::with_capacity(DIM);
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let idx = y * WIDTH + x;
+                if gate_used.contains(x as u32, y as u32) {
+                    self.tile_last_computed[idx] = tick;
+                    stale_by_gate.push(false);
+                } else {
+                    stale_by_gate.push(true);
+                }
+                last_computed_tick.push(self.tile_last_computed[idx]);
+            }
+        }
+
         // decide: signal summary + a counted scaling pass.
         let t = Instant::now();
         stage_decide(
@@ -495,6 +538,8 @@ impl Pipeline {
                 gate_used,
                 sheaf_energy_before: e_before,
                 sheaf_energy_after: e_after,
+                last_computed_tick,
+                stale_by_gate,
             },
             &mut meta,
             &mut self.ops,
@@ -633,7 +678,17 @@ fn stage_refine(
     let mut data = payload.data;
     let mut s: Vec<f64> = data.iter().map(|&v| v as f64).collect();
     let before = graph.energy(&s);
-    graph.smooth_step(&mut s, SHEAF_ALPHA);
+    // The checked step (INV-S4): a NaN/inf payload is refused at the
+    // sheaf boundary with the tick named, instead of tripping the
+    // energy assert below with a false "energy increased" message
+    // (NaN comparisons are false, so the old path reported NaN -> NaN
+    // as an increase — the probe that motivated this is recorded in
+    // docs/ARCHITECTURE.md's D9 row). SHEAF_ALPHA = 0.1 sits well
+    // inside line(DIM)'s validated bound (≈0.50), so the only
+    // reachable refusal here is the non-finite one.
+    graph
+        .try_smooth_step(&mut s, SHEAF_ALPHA)
+        .unwrap_or_else(|e| panic!("tick {claim}: refine refused at the sheaf boundary: {e}"));
     let after = graph.energy(&s);
     // The sheaf claim, asserted per payload, not assumed: one gradient
     // step at α < 1/λmax never increases consistency energy.
@@ -658,12 +713,15 @@ fn stage_refine(
 }
 
 /// The facts about a tick that `publish` needs but does not compute:
-/// the gate `perceive` used and `refine`'s energy pair. Bundled so
-/// the stage signature stays readable (and lint-clean).
+/// the gate `perceive` used, `refine`'s energy pair, and the P5
+/// staleness record. Bundled so the stage signature stays readable
+/// (and lint-clean).
 struct PublishContext {
     gate_used: Viewport,
     sheaf_energy_before: f64,
     sheaf_energy_after: f64,
+    last_computed_tick: Vec<u64>,
+    stale_by_gate: Vec<bool>,
 }
 
 fn stage_publish(
@@ -708,6 +766,8 @@ fn stage_publish(
         sheaf_energy_before: ctx.sheaf_energy_before,
         sheaf_energy_after: ctx.sheaf_energy_after,
         data,
+        last_computed_tick: ctx.last_computed_tick,
+        stale_by_gate: ctx.stale_by_gate,
     }
 }
 
@@ -813,6 +873,17 @@ pub fn generate_drifted_cycles(
 }
 
 /// Serialise a trace in the documented v1 text format (see README).
+///
+/// Payload floats are written with `{}` (Display), which for f32 is
+/// the shortest string that parses back to the *identical* bit
+/// pattern — replay determinism (ARCHITECTURE P13) depends on it.
+/// A fixed-precision format is lossy: the `{:.6}` this used to write
+/// changed all 384 floats of a 6-entry probe trace in their low
+/// bits (and flushed small values to `0.000000` outright), which
+/// made "same trace ⇒ bit-identical snapshots" false through no
+/// fault of the cascade. The grammar is unchanged (whitespace-
+/// separated decimal floats), so files written by the old writer
+/// still parse — they just carry the old writer's rounding.
 pub fn trace_to_string(trace: &[TraceEntry]) -> String {
     let mut out = String::from(
         "# rolling-trace v1\n# columns: arrival_us, then 64 payload floats (8x8 row-major)\n",
@@ -820,7 +891,7 @@ pub fn trace_to_string(trace: &[TraceEntry]) -> String {
     for e in trace {
         out.push_str(&format!("{}", e.arrival.as_micros()));
         for v in &e.data {
-            out.push_str(&format!(" {:.6}", v));
+            out.push_str(&format!(" {v}"));
         }
         out.push('\n');
     }

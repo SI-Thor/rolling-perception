@@ -6,6 +6,36 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — phase 2: proof sweep, rehearsal, fMP4, 2026-11-01 (night)
+
+- **Proof sweep — four claims closed, two real bugs caught by the
+  probes**: D9 PROVEN (the sheaf step now refuses non-finite input
+  with `SheafError::NonFinite` before mutating — the probe had
+  shown NaN spreading to neighbours and α=NaN returning plausible
+  finite energies); D10 PROVEN (α validated at construction against
+  a measured spectral bound, never clamped; the α=10 divergence is
+  refused); P13 PROVEN (full replay bit-identity — the assertion
+  first caught the trace writer's `{:.6}` formatting destroying
+  float bits in 384/384 values; the writer now round-trips);
+  P5 PROVEN (`Published` carries per-tile stale-by-gate marks with
+  last-computed ticks, cell-by-cell pinned). ARCHITECTURE updated.
+- **fMP4 spike — the serve plane's converter debt is closable**
+  (slice2/player/fmp4-spike/): spec-conformant fragmented-MP4 HLS
+  with H.265 is producible on the Thor today by GStreamer remux —
+  no new software — at ~0.09 s per 60 s item vs any encode path.
+  Verdict discipline: "spec-conformant by checklist + probe"; no
+  Apple-client playback claim. Deviations (no `styp`, brands,
+  GOP-length segments) recorded in the spike results.
+- **Graduation rehearsal** (slice1/install/REHEARSAL-LOG.md):
+  fresh-clone stranger walk, 7 stumbles, 6 doc fixes verified by
+  re-running the corrected instructions. The seventh is a code
+  blocker, logged with reproduction: **Slice-1 acceptance is not
+  reproducible from the repo** — ingest sources read hardcoded
+  paths in the Thor's home directory and the repo ships no image
+  fixtures. Bundling cold fixtures + path parameterisation is the
+  named follow-on.
+- Workspace tests 95 → **107**.
+
 ## [Unreleased] — round 3: migration, the GPU API, and DESIGN amended, 2026-11-01 (night)
 
 - **Cascade migrated to SpscRing**: all five inter-stage edges of
