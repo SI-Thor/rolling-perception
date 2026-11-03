@@ -43,6 +43,21 @@ while its worker is alive, the worker's process group is killed
 and the session is marked failed(reason=watchdog_stall) in the
 registry.
 
+Frame floor (POLISH-BACKLOG blocker 3, closed 2026-11-03):
+readiness requires a frame, not just a playlist. A session may
+finish "ready" only with >= 1 counted frame; a worker that exits
+0 behind a playlist holding zero frames finishes
+failed(reason=no_frames) — the recorded VP9 wart, where an
+instantly-EOSing source was served as ready with 0 frames. And a
+worker still alive FIRST_FRAME_S after start with zero frames is
+killed and finished failed(reason=no_first_frame), in every mode,
+so a hung remux/fMP4 can no longer zombie its item forever via
+start_session's reuse rule; a /play waiter on such a session is
+released with that failure instead of hanging. (A transcode's
+frameless case is in practice bounded tighter — STALL_S < the
+floor window — by the stall watchdog above; the floor's exit-0
+rule covers all modes.)
+
 Registry: LEDGER/sessions.jsonl, append-only, one JSON object per
 row: {ts, event: start|stop|failed|refused, session, item, mode,
 units, pid?, fps_draw?, frames?, reason?}. Plain text, foldable by
@@ -55,6 +70,10 @@ Config (env):
   PLAYER_PORT         default 8340
   PLAYER_PHANTOM_UNITS  TEST HOOK: pretend N budget units are
                       already used (acceptance test c). Default 0.
+  PLAYER_FIRST_FRAME_S  frame floor: max seconds a session may
+                      live with zero counted frames before it is
+                      failed as a zombie (no_first_frame).
+                      Default 10.
 """
 import json, math, os, re, signal, subprocess, sys, threading, time, uuid
 from pathlib import Path
@@ -72,6 +91,15 @@ HERE = Path(__file__).resolve().parent
 PROMISE_UNITS = 8          # NVENC-BENCH §6: promise 8 live transcodes
 SEG_DUR = 4                # HLS segment target seconds
 STALL_S = 5.0              # watchdog: no new frames for this long = zombie
+FIRST_FRAME_S = float(os.environ.get("PLAYER_FIRST_FRAME_S", "10.0"))
+# Frame floor window: a session must show its first counted frame
+# within this long or it is failed as a zombie (no_first_frame).
+# Justification: the measured remux of a 5.9 s clip completes in
+# ~50 ms end to end (player README), so a healthy first frame is
+# counted in well under a second; 10 s is ~200x that and 2x the
+# transcode stall tolerance — generous headroom for cold disks
+# and slow sources, but finite, so a hung worker cannot hold its
+# item forever via the reuse rule.
 BITRATE = 6000000          # bench used 6 Mb/s
 
 VID_EXT = {".mp4", ".mkv", ".mov", ".m4v", ".webm"}
@@ -316,8 +344,10 @@ def supervise():
         for s in live:
             if s.mode == "fmp4":
                 # frames = samples recorded by build_hls.py; the
-                # pipeline is a ~0.1 s remux, so this is bookkeeping,
-                # not supervision (the stall watchdog is transcode-only).
+                # pipeline is a ~0.1 s remux, so the frame counting
+                # is bookkeeping — but the frame FLOOR below is
+                # supervision: the stall watchdog is transcode-only,
+                # the floor is not.
                 sj = s.dir / "segments.json"
                 if sj.exists():
                     try:
@@ -325,11 +355,27 @@ def supervise():
                                        json.loads(sj.read_text()).get("segments", []))
                     except Exception:
                         pass
+                # frame floor, live case: alive past the window
+                # with zero frames = zombie, whatever the mode.
+                if (s.proc and s.proc.poll() is None and s.frames == 0
+                        and time.time() - s.started > FIRST_FRAME_S):
+                    try:
+                        os.killpg(s.proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                    if s.ended is None:
+                        s.ended = time.time()
+                    finish(s, "failed", reason="no_first_frame")
+                    continue
                 if s.proc and s.proc.poll() is not None:
                     if s.ended is None:
                         s.ended = time.time()
                     if s.proc.returncode == 0 and s.playlist_ready():
-                        finish(s, "ready")
+                        # frame floor, exit case: ready requires a frame
+                        if s.frames >= 1:
+                            finish(s, "ready")
+                        else:
+                            finish(s, "failed", reason="no_frames")
                     else:
                         finish(s, "failed", reason=f"worker_exit_{s.proc.returncode}")
                 continue
@@ -365,6 +411,22 @@ def supervise():
                     pass
                 finish(s, "failed", reason="watchdog_stall")
                 continue
+            # frame floor, live case: alive past the window with
+            # zero frames = zombie. The stall check above runs
+            # first, so a frameless transcode still dies as
+            # watchdog_stall at STALL_S; this is the bound that
+            # catches the modes the stall watchdog never covered
+            # (remux — a hung remux previously ran forever).
+            if (s.proc and s.proc.poll() is None and s.frames == 0
+                    and time.time() - s.started > FIRST_FRAME_S):
+                try:
+                    os.killpg(s.proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                if s.ended is None:
+                    s.ended = time.time()
+                finish(s, "failed", reason="no_first_frame")
+                continue
             # exited?
             if s.proc and s.proc.poll() is not None:
                 if s.ended is None:
@@ -372,7 +434,11 @@ def supervise():
                 # final full count
                 s.frames = sum(c for c in (count_frames(g) for g in sorted(s.dir.glob("seg*.ts"))) if c)
                 if s.proc.returncode == 0 and s.playlist_ready():
-                    finish(s, "ready")
+                    # frame floor, exit case: ready requires a frame
+                    if s.frames >= 1:
+                        finish(s, "ready")
+                    else:
+                        finish(s, "failed", reason="no_frames")
                 else:
                     finish(s, "failed", reason=f"worker_exit_{s.proc.returncode}")
 
@@ -456,7 +522,10 @@ def play(item_id: str):
             return JSONResponse({"state": "failed", "reason": s.reason}, status_code=502)
         if s.playlist_ready() and s.status == "ready":
             break
-        if s.playlist_ready() and s.mode in ("remux", "fmp4"):
+        # frame floor: never serve a playlist backed by zero
+        # frames; a frameless session fails (no_first_frame /
+        # no_frames) above and releases this waiter with it.
+        if s.playlist_ready() and s.frames >= 1 and s.mode in ("remux", "fmp4"):
             break
         time.sleep(0.4)
     pl = s.dir / "playlist.m3u8"

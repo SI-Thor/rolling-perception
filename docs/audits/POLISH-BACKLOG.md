@@ -30,6 +30,18 @@ effort, and file:line evidence in its audit file.
    code): exit-0 + any segment = ready, so a 0-frame session is
    served as ready; the stall watchdog is transcode-only, so a hung
    remux/fMP4 session zombies an item forever via the reuse rule.
+   — **CLOSED 2026-11-03**: player.py frame floor — ready requires
+   ≥1 counted frame (exit-0 with a playlist but zero frames →
+   `failed/no_frames`); a live worker with zero frames past
+   FIRST_FRAME_S (default 10 s, env PLAYER_FIRST_FRAME_S) is killed
+   as `failed/no_first_frame` in all modes; /play waiters are
+   released with the failure. Both defects were reproduced against
+   the pre-fix code first (empty-EOS → ready/0 frames; hung remux
+   still `running` after a simulated hour, reuse returning the same
+   session). Tests: slice2/player/test_frame_floor.py, 7 passing;
+   workspace cargo suite still 107/0. Staging tree only — not
+   deployed to the Thor. (The separate fMP4 verify-not-integrated
+   MAJOR in AUDIT-PRODUCT remains open.)
 
 ## Majors, ranked
 
@@ -43,7 +55,7 @@ effort, and file:line evidence in its audit file.
    route re-adds them. Stopping is S; purging history before the
    public flip is M and must be scheduled with the flip.
 6. **Home LAN addressing in shipped docs** (OPS): the Thor's
-   <thor-lan-ip> across six duplicated spec copies, the phone's IP in
+   192.168.0.78 across six duplicated spec copies, the phone's IP in
    INSTALL.md, the owner's username in absolute paths in 2 files.
 7. **The trust loop is open** (DOCS spec-debt #1): corrections are
    written and never read — no auto-demotion, no trust accounting.

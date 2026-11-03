@@ -194,3 +194,26 @@ Box state after: no player/gst processes left by this lane
 uninterruptible sleep, not consuming CPU; it does not hold the
 port), port 8340 free, and the Slice-1 soak verified alive
 (confluence-watch PID 1049389) before and after every run.
+
+---
+
+**Addendum 2026-11-03 — finding 3's wart is fixed**
+(POLISH-BACKLOG blocker 3). player.py now enforces a frame
+floor. Exit case: `ready` requires ≥ 1 counted frame — a worker
+that exits 0 behind a playlist holding zero frames finishes
+`failed(reason=no_frames)`. Live case: a worker still alive
+FIRST_FRAME_S (default 10 s; ~200× the ~50 ms measured remux,
+2× the stall tolerance) with zero frames is killed and finished
+`failed(reason=no_first_frame)` in every mode — the stall
+watchdog was transcode-only, so a hung remux/fMP4 also zombied
+its item via the reuse rule; a failed session now releases the
+item (next request starts fresh) and releases /play waiters
+with the failure. Both defects were reproduced against the
+pre-fix code before the fix (empty-EOS → ready with 0 frames;
+hung remux still `running` after a simulated hour; reuse
+returning the same session verbatim), then verified gone.
+Tests: test_frame_floor.py beside player.py — 7 tests (both
+defects in remux/transcode/fMP4 shapes, healthy and
+slow-but-alive paths unchanged, /play consumer release);
+workspace cargo suite still 107 passed / 0 failed. Staging
+tree only; not deployed to the Thor by this lane.

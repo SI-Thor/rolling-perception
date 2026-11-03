@@ -110,6 +110,26 @@ exactly 1800/1800 on the test item. Known spike cost: each probe
 is ~0.5–1 s of CPU, so supervision is not free — a production
 version should take counts from the pipeline itself.
 
+Above that sits the **frame floor** (POLISH-BACKLOG blocker 3,
+closed 2026-11-03): readiness requires a frame, not just a
+playlist. A session can finish `ready` only with **≥ 1 counted
+frame** — a worker that exits 0 behind a playlist holding an
+empty segment finishes `failed(reason=no_frames)` instead (the
+VP9 wart RESULTS.md recorded). And a worker still alive
+**FIRST_FRAME_S** (default 10 s, env `PLAYER_FIRST_FRAME_S`)
+after start with zero frames is killed and finished
+`failed(reason=no_first_frame)` in **every** mode: the stall
+watchdog never covered remux/fMP4, so a hung remux previously
+stayed `running` forever and the session-reuse rule handed the
+zombie to every later viewer. The window is ~200× the measured
+~50 ms remux of a 5.9 s clip and 2× the stall tolerance —
+headroom for slow sources, but finite, so an item cannot be
+trapped. A `/play` waiter on a floored session is released with
+the failure (502 + reason) rather than hanging. Tests:
+`test_frame_floor.py` — fake workers, real ffprobe packet
+counting; both defects reproduced against the pre-fix code
+before the fix landed.
+
 ## API
 
 | Route | What |
