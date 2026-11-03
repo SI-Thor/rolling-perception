@@ -26,13 +26,43 @@ Sources (identical interface — the service cannot tell them apart):
 Gate: frame 0 embeds every tile (baseline). Later frames embed a
 tile iff its mean-abs diff vs the previous frame exceeds --gate.
 This is the wave-3 CHANGED strategy, live.
+
+Tenancy control (SPEC §2.2/§2.3): the service writes a control
+file (control.json in the ledger dir; path via --control or
+$CONFLUENCE_CONTROL_FILE, which the service sets when it spawns
+this ingest). It is polled per frame and carries the yield
+ladder's current orders:
+
+  decision_enabled=false   the decision tier is yielded off
+                           (ladder L3/L4): embed nothing; emit a
+                           reflex line naming the nominated tiles
+                           so the service can publish an
+                           "unperceived change" verdict.
+  budget_embed_s_per_hour  the stream's (ladder-factored) decision
+                           budget: nominated tiles are admitted in
+                           diff-rank order until the rolling
+                           hour's budget would be spent; the rest
+                           are shed — counted in frame_end's
+                           "shed" field, never silently dropped.
+
+No control file (or an unreadable one) = the pre-ladder
+behaviour: decision on, no budget cap. If the control vanishes
+mid-run the same fail-open applies — the yield system protects
+the user's interactive work; its own failure must not blind the
+stream it was protecting.
 """
 import argparse, glob, io, json, os, sys, time
+from collections import deque
 import numpy as np
 import requests
 from PIL import Image
 
 TILES = 16
+#: Pre-measurement estimate of one embed, ms (SPEC §2: one I-JEPA
+#: embed ≈ 0.173 s). Used only until this run has real timings.
+NOMINAL_EMBED_MS = 173.0
+#: The budget window: embed-seconds per ROLLING hour (§2.2).
+BUDGET_WINDOW_S = 3600.0
 
 
 def fixtures_dir():
@@ -71,11 +101,19 @@ def tiles_of(frame):
 
 
 class Emitter:
-    def __init__(self, rack_url, gate):
+    def __init__(self, rack_url, gate, control_path=""):
         self.rack = rack_url.rstrip("/") + "/embed/image"
         self.gate = gate
         self.session = requests.Session()
         self.prev_tiles = None
+        self.control_path = control_path or ""
+        self._control_mtime = None
+        self._control = None
+        #: (monotonic_s, embed_ms) for embeds inside the budget window.
+        self._spend = deque()
+        #: every embed_ms this run (the admission estimate's basis).
+        self._embed_ms_hist = []
+        self._decision_was_off = False
 
     def embed(self, tile_img):
         buf = io.BytesIO()
@@ -89,6 +127,39 @@ class Emitter:
         emb = r.json()["embedding"]
         assert len(emb) == 1280, f"embedding dim {len(emb)}"
         return emb, dt
+
+    def _read_control(self):
+        """The service's current orders, or None (fail-open).
+
+        Cached on the file's mtime; re-read only when it changes.
+        Any error — missing file, torn write, bad JSON — reads as
+        "no control", never as a stop order.
+        """
+        if not self.control_path:
+            return None
+        try:
+            mtime = os.stat(self.control_path).st_mtime_ns
+        except OSError:
+            return None
+        if mtime != self._control_mtime:
+            try:
+                with open(self.control_path) as fh:
+                    self._control = json.load(fh)
+                self._control_mtime = mtime
+            except (OSError, ValueError):
+                return None
+        return self._control
+
+    def _window_spend_s(self):
+        cutoff = time.monotonic() - BUDGET_WINDOW_S
+        while self._spend and self._spend[0][0] < cutoff:
+            self._spend.popleft()
+        return sum(ms for _, ms in self._spend) / 1000.0
+
+    def _est_embed_ms(self):
+        if self._embed_ms_hist:
+            return sum(self._embed_ms_hist) / len(self._embed_ms_hist)
+        return NOMINAL_EMBED_MS
 
     def frame(self, img, frame_idx):
         """Tile, gate, embed nominated tiles, emit records + frame_end."""
@@ -104,17 +175,57 @@ class Emitter:
             diffs.append(d)
             if self.prev_tiles is None or d > self.gate:
                 nominated.append(ti)
-        for ti in nominated:
-            emb, ms = self.embed(tls[ti])
-            rec = {"seq": 0, "frame": frame_idx, "tile": ti,
-                   "t_arrival_us": t_capture,
-                   "diff_score": round(diffs[ti], 4),
-                   "embed_ms": round(ms, 2),
-                   "embedding": [round(float(x), 6) for x in emb]}
-            print(json.dumps(rec), flush=True)
+
+        ctl = self._read_control()
+        decision = True if ctl is None else bool(ctl.get("decision_enabled", True))
+        budget_s = None if ctl is None else ctl.get("budget_embed_s_per_hour")
+
+        shed = 0
+        embedded = 0
+        if decision:
+            if self._decision_was_off:
+                # Decision tier just returned: re-baseline the
+                # whole frame (the pipeline's per-tile previous
+                # embeddings are a yield-period old).
+                nominated = list(range(TILES))
+                self._decision_was_off = False
+            # Budget admission is in rank order (§2.1 step 2):
+            # the tiles most likely to matter embed first.
+            order = nominated
+            if budget_s is not None:
+                order = sorted(nominated, key=lambda ti: -diffs[ti])
+            for ti in order:
+                if budget_s is not None:
+                    est_s = self._est_embed_ms() / 1000.0
+                    if self._window_spend_s() + est_s > budget_s:
+                        shed += 1
+                        continue
+                emb, ms = self.embed(tls[ti])
+                self._spend.append((time.monotonic(), ms))
+                self._embed_ms_hist.append(ms)
+                rec = {"seq": 0, "frame": frame_idx, "tile": ti,
+                       "t_arrival_us": t_capture,
+                       "diff_score": round(diffs[ti], 4),
+                       "embed_ms": round(ms, 2),
+                       "embedding": [round(float(x), 6) for x in emb]}
+                print(json.dumps(rec), flush=True)
+                embedded += 1
+        else:
+            self._decision_was_off = True
+
+        if embedded == 0 and nominated:
+            # Nothing was perceived this frame — say so at the
+            # reflex tier, with the nominated tiles named, so the
+            # service can publish an unperceived-change verdict
+            # instead of a silence that would lie by omission.
+            print(json.dumps({"control": "reflex", "frame": frame_idx,
+                              "t_capture_us": t_capture,
+                              "nominated_tiles": nominated,
+                              "decision_enabled": decision}), flush=True)
         print(json.dumps({"control": "frame_end", "frame": frame_idx,
                           "t_capture_us": t_capture,
                           "nominated": len(nominated),
+                          "shed": shed,
                           "gate_diff": self.gate}), flush=True)
         self.prev_tiles = tls
         return len(nominated)
@@ -277,11 +388,17 @@ def main():
                     help="fixture directory override (else "
                          "$CONFLUENCE_FIXTURES_DIR, else the fixtures "
                          "bundled in this repo)")
+    ap.add_argument("--control", default="",
+                    help="tenancy control file to poll per frame "
+                         "(else $CONFLUENCE_CONTROL_FILE, which the "
+                         "service sets when it spawns this ingest; "
+                         "absent = no yield orders, no budget cap)")
     args = ap.parse_args()
     if args.fixtures_dir:
         fixtures_dir.override = args.fixtures_dir
 
-    em = Emitter(args.rack, args.gate)
+    control_path = args.control or os.environ.get("CONFLUENCE_CONTROL_FILE", "")
+    em = Emitter(args.rack, args.gate, control_path)
     if args.source == "staged":
         frames, truth = staged_frames()
         if args.truth_out:

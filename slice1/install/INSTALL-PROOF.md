@@ -30,7 +30,7 @@ full, in a scratch prefix — the step the original skipped.
 $ CONFLUENCE_HOME=$S bash install.sh
 Confluence installer — DRY RUN. Nothing will be changed.
 Install root: /tmp/confluence-install-proof/root
-Source: ~/workspace/rolling-perception-work/repo-staging (checkout)
+Source: /home/hatch/workspace/rolling-perception-work/repo-staging (checkout)
 
 Checking prerequisites...
   WARN: Jetson AGX Thor (aarch64); this machine reports x86_64 — check failed.

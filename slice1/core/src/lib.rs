@@ -11,8 +11,12 @@
 //! - **this crate**: spawns the ingest, runs the harbor-watch
 //!   cascade incrementally ([`live::LivePipeline`], batch-parity
 //!   tested), manages the rack's lifecycle (start if down, stop on
-//!   exit iff we started it), and publishes verdicts to the
-//!   per-stream text ledger ([`ledger`]).
+//!   exit iff we started it), publishes verdicts to the
+//!   per-stream text ledger ([`ledger`]), and holds the §2.3
+//!   tenancy contract ([`tenancy`]): a host sampler walks the
+//!   yield ladder under foreign load, scaling the §2.2 budget and
+//!   switching the decision tier via the control file the ingest
+//!   polls (`control.json` in the ledger directory).
 //! - **the ledger** is canonical: lens.txt (rhythm + appearance),
 //!   state.txt (state + budget meter + coverage), events.jsonl
 //!   (service receipts + published verdicts with lineage),
@@ -23,3 +27,4 @@ pub mod config;
 pub mod ledger;
 pub mod live;
 pub mod service;
+pub mod tenancy;

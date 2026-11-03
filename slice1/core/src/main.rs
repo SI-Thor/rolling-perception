@@ -18,7 +18,7 @@ fn main() {
     match service::run(&cfg) {
         Ok(s) => {
             println!(
-                "{{\"frames\":{},\"events\":{},\"embeds\":{},\"embeds_spent_s\":{:.3},\"embed_everything_estimate_s\":{:.3},\"verdict_latency_p50_ms\":{:.3},\"verdict_latency_max_ms\":{:.3},\"rack_started_by_me\":{},\"rack_stopped_by_me\":{}}}",
+                "{{\"frames\":{},\"events\":{},\"embeds\":{},\"embeds_spent_s\":{:.3},\"embed_everything_estimate_s\":{:.3},\"verdict_latency_p50_ms\":{:.3},\"verdict_latency_max_ms\":{:.3},\"rack_started_by_me\":{},\"rack_stopped_by_me\":{},\"yield_rung\":\"{}\"}}",
                 s.frames,
                 s.events,
                 s.embeds,
@@ -27,7 +27,8 @@ fn main() {
                 s.verdict_latency_p50_ms,
                 s.verdict_latency_max_ms,
                 s.rack_started_by_me,
-                s.rack_stopped_by_me
+                s.rack_stopped_by_me,
+                s.final_rung
             );
         }
         Err(e) => {

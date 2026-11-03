@@ -63,6 +63,14 @@ effort, and file:line evidence in its audit file.
 8. **The yield ladder is doctrine, not code** (DOCS): 0 of 4 rungs
    implemented; budgets meter but never enforce. Spec-debt 35
    items total (8 HIGH) are the next-phase menu.
+   **BUILT 2026-11-03** — closed by the tenancy build in
+   slice1/core (src/tenancy.rs + control file + ingest
+   admission): §2.2 budgets enforce (rank-order admission over a
+   rolling hour, sheds counted), §2.3 ladder L1–L4 live with
+   receipted transitions and spec hysteresis. Residuals named in
+   the spec's §2.3 implementation note (reserved pool is
+   multi-stream; the reflective flag has no consumer in slice
+   1's cascade yet; yield latency still TO-MEASURE).
 9. **fmt drift** (ENGINE): 48 hunks across 4 of 7 packages, worst
    in production slice1/core (15); one fmt commit closes it, and
    nothing currently stops it returning (no CI in the repo).

@@ -42,7 +42,49 @@ text ledger.
 Config is a `key = value` text file (see acceptance.sh for working
 examples): stream_id, ledger_dir, ingest_cmd, rack_url,
 rack_autostart, stop_rack_on_exit, threshold, alpha, focus_k,
-soak, max_frames, stop_file.
+soak, max_frames, stop_file, budget_embed_s_per_hour, tenancy,
+tenancy_sample_ms, tenancy_sustain_s, tenancy_recovery_s,
+mem_pressure_pct, tenancy_platform_units.
+
+## Tenancy: the yield ladder (SPEC §2.3, built 2026-11-03)
+
+The watcher is a tenant on a shared box. `src/tenancy.rs` samples
+the host every 2 s — foreign GPU load **attributed per process**
+(nvidia-smi compute-apps minus the platform's own pids: the
+service's tree plus the MainPIDs of `tenancy_platform_units`;
+aggregate counters are never trusted, or the platform would yield
+to its own embeds), interactive sessions via loginctl's idle
+hint, memory via /proc/meminfo — and steps a ladder:
+
+- **L1** backfill stops being permitted (flag in state/control;
+  the §4 backfill process is the consumer).
+- **L2** the stream's embed budget halves; reflective sampling
+  flag off (published for consumers; slice 1's cascade has no
+  reflective stage yet).
+- **L3** reflex-only: the ingest embeds nothing and reports each
+  changed frame at the reflex tier; the ledger publishes those as
+  *unperceived-change* verdicts and health.txt carries
+  `yield_rung`, `yield_reason`, `decision_tier`, `silence_basis` —
+  a yielded stream's silence never claims decision-tier meaning.
+- **L4** (needs memory pressure too: MemAvailable <
+  `mem_pressure_pct` of RAM) decision models unload — the rack is
+  stopped **only if this service started it**; a foreign-owned
+  rack is receipted as not ours and left running. On recovery the
+  rack is restarted if we unloaded it.
+
+Entry: foreign GPU > 20% sustained > 5 s, an active interactive
+session, or memory pressure. Recovery is hysteretic: 60 s of
+clear headroom, one rung back per 60 s, so a stream hovering at
+the threshold cannot flap the box. Every transition is receipted
+in `events.jsonl` (`yield_rung` events with the sample figures),
+and the ladder's orders reach the ingest through `control.json`
+in the ledger dir (path in `$CONFLUENCE_CONTROL_FILE`): budget
+admission in diff-rank order over a rolling hour
+(`budget_embed_s_per_hour`, default 300 — the §2.2 camera class),
+sheds counted as `tiles_shed`. Tests: `cargo test` (tenancy unit
++ integration suites, scripted probe) and
+`python3 tests/test_ingest_control.py` (the ingest's control
+effects against a stub rack).
 
 Verdict latency is end-to-end: frame capture stamp (ingest) to
 ledger write, so it includes that frame's own embed time.

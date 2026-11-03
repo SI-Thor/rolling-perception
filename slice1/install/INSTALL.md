@@ -224,7 +224,7 @@ network works. The reference app on Android is **IP Webcam**
 1. Connect the phone to the **same Wi-Fi** as the Thor.
 2. Install **IP Webcam**, open it, scroll to the bottom, tap
    **Start server**. The phone screen now shows an address like
-   `http://<lan-ip>:8080`. Leave the app running and plug
+   `http://192.168.0.105:8080`. Leave the app running and plug
    the phone into power — streaming drains a battery.
 3. Prop the phone where it can see the scene (door, harbour,
    driveway — wherever this install is watching).
@@ -234,11 +234,11 @@ network works. The reference app on Android is **IP Webcam**
    screen, keeping the `/shot.jpg` ending:
 
    ```
-   ingest_cmd = python3 /home/<user>/confluence/app/core/ingest/ingest.py --source shot --url http://<lan-ip>:8080/shot.jpg --gate 3.0 --cadence-ms 500
+   ingest_cmd = python3 /home/<user>/confluence/app/core/ingest/ingest.py --source shot --url http://192.168.0.105:8080/shot.jpg --gate 3.0 --cadence-ms 500
    ```
 
    (For the app's continuous stream instead of polled stills,
-   use `--source mjpeg --url http://<lan-ip>:8080/video`.)
+   use `--source mjpeg --url http://192.168.0.105:8080/video`.)
    The name the household sees for this camera is the
    `stream_id` at the top of the same file (`cam1` in the
    starter config) — set it to household words, e.g.

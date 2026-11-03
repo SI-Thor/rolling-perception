@@ -30,6 +30,31 @@ pub struct Config {
     pub max_frames: u32,
     /// Checked once per frame; if it appears, shut down cleanly.
     pub stop_file: String,
+    /// Per-stream decision budget in embed-seconds per rolling
+    /// hour (SPEC §2.2). Default 300 = the spec's camera class
+    /// default. The yield ladder (§2.3) scales this by its rung
+    /// factor; the ingest enforces the effective figure via the
+    /// control file, admitting nominated tiles in rank order.
+    pub budget_embed_s_per_hour: f64,
+    /// Run the §2.3 tenancy sampler + yield ladder. When false,
+    /// the ladder never moves (the budget is still enforced at
+    /// its full, unfactored figure).
+    pub tenancy: bool,
+    /// Host sampler cadence in ms (spec: 2000).
+    pub tenancy_sample_ms: u64,
+    /// Foreign load must persist this long before yielding, in
+    /// seconds (spec: 5). Interactive-session signals bypass it.
+    pub tenancy_sustain_s: f64,
+    /// Clear-headroom interval before/between recovery steps, in
+    /// seconds (spec: 60 — both numbers are the same interval).
+    pub tenancy_recovery_s: f64,
+    /// MemAvailable below this percent of total RAM counts as
+    /// memory pressure — the L4 trigger. (The spec names the
+    /// trigger, not the number; 10 is this build's line.)
+    pub mem_pressure_pct: f64,
+    /// Comma-separated systemd units whose MainPIDs count as
+    /// platform processes for foreign-load attribution.
+    pub tenancy_platform_units: String,
 }
 
 impl Default for Config {
@@ -47,6 +72,13 @@ impl Default for Config {
             soak: false,
             max_frames: 0,
             stop_file: String::new(),
+            budget_embed_s_per_hour: 300.0,
+            tenancy: true,
+            tenancy_sample_ms: 2000,
+            tenancy_sustain_s: 5.0,
+            tenancy_recovery_s: 60.0,
+            mem_pressure_pct: 10.0,
+            tenancy_platform_units: "jev-rack".into(),
         }
     }
 }
@@ -117,6 +149,12 @@ pub fn parse_config(text: &str) -> Result<Config, ConfigError> {
     if let Some(v) = boolean("soak")? {
         cfg.soak = v;
     }
+    if let Some(v) = boolean("tenancy")? {
+        cfg.tenancy = v;
+    }
+    if let Some(v) = get("tenancy_platform_units") {
+        cfg.tenancy_platform_units = v;
+    }
     if let Some(v) = num("threshold")? {
         cfg.threshold = v;
     }
@@ -128,6 +166,21 @@ pub fn parse_config(text: &str) -> Result<Config, ConfigError> {
     }
     if let Some(v) = num("max_frames")? {
         cfg.max_frames = v as u32;
+    }
+    if let Some(v) = num("budget_embed_s_per_hour")? {
+        cfg.budget_embed_s_per_hour = v;
+    }
+    if let Some(v) = num("tenancy_sample_ms")? {
+        cfg.tenancy_sample_ms = v as u64;
+    }
+    if let Some(v) = num("tenancy_sustain_s")? {
+        cfg.tenancy_sustain_s = v;
+    }
+    if let Some(v) = num("tenancy_recovery_s")? {
+        cfg.tenancy_recovery_s = v;
+    }
+    if let Some(v) = num("mem_pressure_pct")? {
+        cfg.mem_pressure_pct = v;
     }
     Ok(cfg)
 }

@@ -49,6 +49,12 @@ pub struct Stats {
     pub events_published: u64,
     pub tiles_nominated: u64,
     pub tiles_embedded: u64,
+    /// Nominated tiles the budget admission shed (§2.1 step 2) —
+    /// logged, never silently dropped (SPEC §1 contention row).
+    pub tiles_shed: u64,
+    /// Verdicts published from the reflex tier alone while the
+    /// decision tier was yielded off (§2.3 L3/L4).
+    pub reflex_events: u64,
     pub embeds_spent_s: f64,
     pub embed_ms_window: Vec<f64>,
     pub verdict_latency_ms: Vec<f64>,
@@ -102,6 +108,18 @@ pub struct Ledger {
     pub threshold: f64,
     pub alpha: f64,
     pub gate_diff: Option<f64>,
+    /// Yield ladder position (§2.3), maintained by the service's
+    /// tenancy loop: "L0".."L4", and why it is there.
+    pub yield_rung: String,
+    pub yield_reason: String,
+    /// L4 unloaded the decision models (and this service owned
+    /// them, so it could).
+    pub models_unloaded: bool,
+    /// Base per-stream budget (§2.2) and the ladder-factored
+    /// effective figure, embed-seconds per rolling hour. Set by
+    /// the service; `None` when the ledger is driven directly.
+    pub budget_base_s: Option<f64>,
+    pub budget_effective_s: Option<f64>,
 }
 
 impl Ledger {
@@ -128,6 +146,11 @@ impl Ledger {
             threshold,
             alpha,
             gate_diff: None,
+            yield_rung: "L0".into(),
+            yield_reason: "none".into(),
+            models_unloaded: false,
+            budget_base_s: None,
+            budget_effective_s: None,
         };
         l.write_all()?;
         Ok(l)
@@ -232,6 +255,48 @@ impl Ledger {
         Ok(latency_ms)
     }
 
+    /// Record one frame perceived by the REFLEX tier alone — the
+    /// decision tier is yielded off (§2.3 L3/L4) or its budget is
+    /// spent, so no tile was embedded. The frame still counts,
+    /// the nominations still count, and if anything was nominated
+    /// an "unperceived change" verdict publishes: the change feed
+    /// degrades in resolution, never in liveness. The event is
+    /// marked `unperceived` with its basis in plain words and a
+    /// zero lineage mask — no cascade stage ran, and the record
+    /// must not pretend one did.
+    pub fn record_reflex_frame(
+        &mut self,
+        frame: u32,
+        t_capture_us: u64,
+        nominated_tiles: &[u32],
+        basis: &str,
+    ) -> std::io::Result<()> {
+        let now = epoch_us();
+        let s = &mut self.stats;
+        s.frames_seen += 1;
+        s.last_frame = Some(frame);
+        s.last_frame_wall_us = now;
+        s.tiles_nominated += nominated_tiles.len() as u64;
+        if !nominated_tiles.is_empty() {
+            s.events_published += 1;
+            s.reflex_events += 1;
+            let lat = (now.saturating_sub(t_capture_us)) as f64 / 1000.0;
+            writeln!(
+                self.events,
+                "{{\"kind\":\"verdict\",\"stream\":\"{}\",\"frame\":{},\"wall_us\":{},\"t_capture_us\":{},\"verdict_latency_ms\":{:.3},\"unperceived\":true,\"basis\":\"{}\",\"changed_tiles\":{:?},\"focus\":[],\"lineage_mask\":0,\"embeds_this_frame\":0,\"tiles\":[]}}",
+                self.stream_id,
+                frame,
+                now,
+                t_capture_us,
+                lat,
+                basis.replace('"', "'"),
+                nominated_tiles
+            )?;
+            self.events.flush()?;
+        }
+        self.write_all()
+    }
+
     /// Observe a frame-arrival interval for the lens rhythm stats.
     pub fn observe_period(&mut self, period_ms: f64) {
         let s = &mut self.stats;
@@ -300,6 +365,18 @@ impl Ledger {
         ));
         t.push_str(&format!("tiles_nominated = {}\n", s.tiles_nominated));
         t.push_str(&format!("tiles_embedded = {}\n", s.tiles_embedded));
+        t.push_str(&format!("tiles_shed = {}\n", s.tiles_shed));
+        t.push_str(&format!("reflex_events = {}\n", s.reflex_events));
+        if let (Some(base), Some(eff)) = (self.budget_base_s, self.budget_effective_s) {
+            t.push_str(&format!("budget_embed_s_per_hour = {base:.1}\n"));
+            t.push_str(&format!("budget_effective_embed_s_per_hour = {eff:.1}\n"));
+        }
+        t.push_str(&format!("yield_rung = {}\n", self.yield_rung));
+        t.push_str(&format!("yield_reason = {}\n", self.yield_reason));
+        t.push_str(&format!(
+            "backfill_permitted = {}\n",
+            self.yield_rung == "L0"
+        ));
         t.push_str(&format!("coverage = {:.4}\n", s.coverage()));
         t.push_str(&format!("embeds_spent_s = {:.3}\n", s.embeds_spent_s));
         t.push_str(&format!(
@@ -328,6 +405,34 @@ impl Ledger {
         t
     }
 
+    /// Which tier's silence a quiet ledger currently speaks with:
+    /// "decision" (the full cascade is perceiving), "reflex"
+    /// (yielded to L3/L4 — diffs are counted, nothing is embedded),
+    /// or "none" (nothing has been seen / the perceiving tier is
+    /// down, so quiet means nothing at all).
+    pub fn silence_basis(&self) -> &'static str {
+        let s = &self.stats;
+        if s.frames_seen == 0 {
+            return "none";
+        }
+        match self.yield_rung.as_str() {
+            "L3" | "L4" => "reflex",
+            _ if self.rack_up => "decision",
+            _ => "none",
+        }
+    }
+
+    /// The decision tier's posture in plain words (health.txt).
+    pub fn decision_tier(&self) -> &'static str {
+        match self.yield_rung.as_str() {
+            "L0" | "L1" => "full",
+            "L2" => "halved",
+            "L4" if self.models_unloaded => "reflex_only_models_unloaded",
+            "L3" | "L4" => "reflex_only",
+            _ => "full",
+        }
+    }
+
     pub fn health_text(&self) -> String {
         let s = &self.stats;
         let (p50, p99) = percentiles(&s.embed_ms_window);
@@ -337,16 +442,23 @@ impl Ledger {
             epoch_us().saturating_sub(s.last_frame_wall_us) as f64 / 1000.0
         };
         format!(
-            "embed_ms_p50 = {:.2}\nembed_ms_p99 = {:.2}\nembed_ms_n = {}\nframes_pending_max = {}\nlast_frame_age_ms = {:.1}\nrack = {}\nsilence_meaningful = {}\nupdated_wall_us = {}\n",
+            "embed_ms_p50 = {:.2}\nembed_ms_p99 = {:.2}\nembed_ms_n = {}\nframes_pending_max = {}\nlast_frame_age_ms = {:.1}\nrack = {}\nyield_rung = {}\nyield_reason = {}\ndecision_tier = {}\nsilence_basis = {}\nsilence_meaningful = {}\nupdated_wall_us = {}\n",
             p50,
             p99,
             s.embed_ms_window.len(),
             s.frames_pending_max,
             age_ms,
             if self.rack_up { "up" } else { "down" },
+            self.yield_rung,
+            self.yield_reason,
+            self.decision_tier(),
+            self.silence_basis(),
             // Panel-1 amendment: silence is only "normal" when health
-            // says so — a starved lane must not look calm.
-            self.rack_up && s.frames_seen > 0,
+            // says so — a starved lane must not look calm. The tier
+            // whose silence is on offer must itself be alive: at
+            // L0–L2 that is the rack-backed decision tier; at
+            // L3/L4 the reflex tier needs no rack, only frames.
+            self.silence_basis() != "none",
             epoch_us()
         )
     }

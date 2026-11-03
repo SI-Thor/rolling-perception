@@ -6,6 +6,44 @@ versions follow [SemVer](https://semver.org/) once the repo is public.
 Measured numbers appear only with the machine and method that produced
 them — the repo rule: no claim without a test or a bench number.
 
+## [Unreleased] — the yield ladder is code: tenancy + budget enforcement, 2026-11-03
+
+- slice1/core: SPEC §2.3's yield ladder and §2.2's budget
+  enforcement are built (POLISH-BACKLOG #8 / AUDIT-DOCS D-B3
+  closed). src/tenancy.rs: a host sampler (2 s cadence; GPU load
+  attributed per-process via nvidia-smi — aggregate counters are
+  never trusted, the platform must not yield to itself;
+  loginctl idle hint as the interactive signal; /proc/meminfo
+  for memory pressure) feeds a pure ladder state machine:
+  foreign load >20% sustained >5 s (or an active interactive
+  session) steps down L1 backfill off → L2 budgets halved,
+  reflective off → L3 reflex-only (unperceived-change verdicts
+  still publish; silence carries its basis in health.txt) → L4
+  models unload, gated on memory pressure (<10% RAM available).
+  Recovery is the spec's hysteresis: 60 s clear, one rung per
+  60 s. Every transition is receipted in events.jsonl with the
+  sample figures that caused it.
+- The ladder's orders reach the ingest via control.json in the
+  ledger dir (path handed over in $CONFLUENCE_CONTROL_FILE):
+  budget admission in diff-rank order over a rolling hour
+  (sheds counted in state.txt as tiles_shed, never silent),
+  reflex lines when the decision tier is off. L4 unloads the
+  rack only when this service started it; a foreign-owned rack
+  is receipted as not ours and left running.
+- Tests: workspace 107 → 118 (8 ladder unit tests incl.
+  no-flap under boundary-straddling pressure; 3 service
+  integration tests with a scripted probe — yield/recovery
+  order, L4 unowned-models path, alternating-pressure
+  stability) plus tests/test_ingest_control.py proving the
+  ingest-side effects against a stub rack (budget admits 2 of
+  16 and sheds 14 at 0.5 embed-s/h; decision-off = 0 rack
+  calls; no control file = pre-ladder counts exactly).
+  NOT in this build: §2.3's reserved watching pool (multi-stream;
+  this service is single-stream) and a reflective-sampling
+  consumer (slice 1's cascade has no reflective stage; the
+  ladder publishes the flag). Repo only — the running 48 h soak
+  finishes on the previous build; this lands at its next start.
+
 ## [Unreleased] — presence V4 design: realtime, interruptible, fenced, 2026-11-02
 
 - slice2/presence/V4-DESIGN.md: Shape B chosen — the v3 cascade

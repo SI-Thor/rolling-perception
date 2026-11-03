@@ -78,7 +78,7 @@ it already exists on the fleet and is *called*, not rebuilt.
 | Image studio | ComfyUI :8188 + portal :8190 (FastAPI, single page, sqlite gallery, queue view; phone-verified 2026-10-23) | Proof that a Thor service with a one-page face is the right product shape for this house; also a generation lane — produced media enters Confluence as library items through the same ingest as any file (see §3.1), not through a special door. |
 | Foundry portal | Thor :8200 (FastAPI, builder chat + workbench + registry board) | The console precedent: conversation on the left, the machine's work visible in a glass box, a registry/lifecycle board. Confluence's console (§2.6) is a projection in this style, not a new UI paradigm. Foundry's brain chain (Worker → Thor :8001 → fallback parser) is also the degradation precedent: every smart feature names its dumber fallback. |
 | Radio Room | ProArt front-end + Thor brain service :8079 (TTS), faster-whisper STT on the ProArt (0.13 s warm for 5 s speech), per-stage receipts in JSONL | The audio lane's proven shape: capture where the human is, perceive where the GPU is, receipts per stage. Confluence audio ingest (§3.5) reuses the pipeline pattern and the receipt discipline; the VHF dressing itself is Radio Room's, not Confluence's. |
-| LAN mesh + gpu-queue | Thor = hub, <thor-lan-ip> (DHCP; `thor.local` is the durable name); gpu-queue service owns Thor GPU dispatch with the successor rule | Placement facts and the GPU contention rule: Confluence perception jobs enter the same queue discipline as everything else on the box. No Confluence lane runs a private downloader or a private GPU free-for-all. |
+| LAN mesh + gpu-queue | Thor = hub, 192.168.0.78 (DHCP; `thor.local` is the durable name); gpu-queue service owns Thor GPU dispatch with the successor rule | Placement facts and the GPU contention rule: Confluence perception jobs enter the same queue discipline as everything else on the box. No Confluence lane runs a private downloader or a private GPU free-for-all. |
 
 Hardware facts the design leans on (measured, docs/FEASIBILITY.md in
 the substrate repo): AGX Thor, sm_110, 20 SMs, 122 GiB unified
@@ -815,6 +815,53 @@ Resolution — **the platform is a tenant with a yield contract:**
 **TO-MEASURE:** yield latency end-to-end (foreign load start →
 last platform kernel), and false-yield rate (platform stepping
 down for a 3 s transcode spike it could have ridden out).
+
+**Implementation (2026-11-03, slice1/core — the ladder is code):**
+`src/tenancy.rs` + the service loop + the ingest's control
+polling implement §2.2's budget enforcement and this section's
+ladder for the single-stream watch service. Sampler: 2 s cadence
+(config `tenancy_sample_ms`); foreign GPU load is attributed
+per-process via nvidia-smi compute-apps against the platform pid
+set (the service's own tree + `tenancy_platform_units` MainPIDs,
+default `jev-rack`) — aggregate GPU counters are never used,
+because the platform's own embeds load the GPU and a tenant that
+yields to itself is a feedback loop; where no attributing source
+exists the reading is "no data", not the aggregate. Interactive
+signal: a non-idle graphical loginctl session (IdleHint) — a
+logged-in-but-idle desktop does not yield the platform.
+Memory pressure (L4's trigger): MemAvailable < 10% of RAM
+(config `mem_pressure_pct`; the spec names the trigger, not the
+number). Step-down: one rung per fresh sample while pressure
+holds; foreign pressure alone floors at L3, L4 requires memory
+pressure. Recovery: the §2.3 hysteresis verbatim (60 s clear,
+one rung per 60 s; config `tenancy_recovery_s` /
+`tenancy_sustain_s` carry the spec's 60 s / 5 s as tunable
+defaults). Rung effects in this service: L1 clears
+`backfill_permitted` in state.txt/control.json (the §4 backfill
+process is the consumer; this service runs no backfill); L2
+halves the effective budget (control file → ingest admission)
+and clears the reflective flag (slice 1's cascade has no
+reflective stage — the flag is published for consumers, nothing
+here consumes it yet); L3 sets decision off — the ingest embeds
+nothing and emits reflex lines, and the ledger publishes
+"unperceived change" verdicts (marked `unperceived`, zero
+lineage) while health.txt carries `yield_rung`, `yield_reason`,
+`decision_tier` and `silence_basis` so a yielded stream's silence
+never reads as decision-tier silence; L4 additionally unloads
+the rack **iff this service started it** (systemctl, receipted;
+reload is issued on the step back up and decision stays off
+until health answers) — a rack the service does not own is
+receipted `yield_models_not_owned` and left running. Budgets:
+per-stream embed-seconds per rolling hour (config
+`budget_embed_s_per_hour`, default 300 = the §2.2 camera class
+default), enforced by the ingest's rank-order admission; sheds
+are counted (`tiles_shed`) and a fully-shed frame reports at the
+reflex tier rather than going silent. Transitions are
+receipted in events.jsonl as `yield_rung` service events with
+the sample figures. Not implemented here: the reserved watching
+pool (item 4 — multi-stream; this service is one stream) and
+end-to-end yield latency (still TO-MEASURE above). Proof:
+`cargo test` tenancy suites + `tests/test_ingest_control.py`.
 
 ## 3. Learned normal: the lens
 

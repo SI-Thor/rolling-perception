@@ -376,6 +376,12 @@ threshold = 0.25
 alpha = 0.1
 focus_k = 4
 soak = false
+# Perception budget (SPEC 2.2): embed-seconds per rolling hour.
+budget_embed_s_per_hour = 300
+# Tenancy (SPEC 2.3): the yield ladder is on — if foreign work
+# takes the GPU, the watcher steps down (budgets halve, then
+# reflex-only) and receipts every step in the ledger.
+tenancy = true
 EOF
 
 FORCE_WRITE=1 write_file "$WATCH_UNIT" <<EOF
