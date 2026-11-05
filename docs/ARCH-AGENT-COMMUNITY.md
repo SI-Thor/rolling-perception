@@ -277,6 +277,25 @@ studio (craftmind-studio), the classroom (craftmind-courses), Sitka ecology,
 agents playing music together. Each is a new world with the same digest,
 rotation, governor, and smiths.
 
+## 8a. The Director — a citizen whose act is framing
+
+Added 2026-11-05, Casey's direction: the league should be *watchable as
+cinema*, not just spectatable as gameplay. The Director is a non-playing
+citizen class: hero-class perception budget, spent on framing rather than
+acting. Its body is a spectator camera in the world; its System One is a
+shot grammar (establish the hole wide; follow the thrower; track the disc's
+flight; cut to the basket; take the reaction); its System Two voice plans
+shots and scenes a little ahead of the play, from the digest — it reads the
+same percept as every citizen, but where a thrower asks "what do I do?",
+the Director asks "what is this moment *about*?". Its output is a stream:
+the front-room box renders the camera's view, and the stream is relayed
+outward (the Oracle is the fleet's public door) so the presentation of the
+world is a directed film of the society, developing shot by shot as the
+play develops. Lineage: craftmind-studio's Director AI, generalised from
+scripted scenes to live ones. Status: designed, not built. First spike: a
+spectator camera body that follows play on the shot grammar's simplest
+three shots, streamed as a test feed.
+
 ## 9. What exists, what is designed, what is open (2026-11-05)
 
 **Exists and verified:** the Paper world on the Orin; the Craftmind bodies
