@@ -36,17 +36,17 @@ names, long base64 runs, `192.168.`, personal-mail domains,
   TypeSafe credential at length (routes, HTTP 401s, the remedy) —
   the credential's value never appears. Fine as-is; it is a good
   record of a blocked route.
-- The Oracle's public IP (<oracle-public-ip>) appears nowhere.
+- The Oracle's public IP (147.224.38.131) appears nowhere.
 - Commit identity is the agent address
   (superinstance-agent@example.com) — fine by design.
 
 ### OPS-S2 — Home-network addressing in shipped docs — MAJOR, MUST-FIX before public, effort S
-- `<thor-lan-ip>` (the Thor's LAN address) in
+- `192.168.0.78` (the Thor's LAN address) in
   `docs/SPEC-STREAM-PLATFORM.md`, `slice1/install/INSTALL.md`,
   `slice1/PROART-CAMERA.md`, and the panel-2 prefix copies
   (`slice2/panel-2/_prefix.md` + all four `q*.md` — the spec text
   is duplicated six times, so one fact has six homes).
-- `<lan-ip>` — a personal phone's LAN address — in
+- `192.168.0.105` — a personal phone's LAN address — in
   `slice1/install/INSTALL.md` (the IP Webcam example).
 - RFC1918 addresses are not routable, so the exposure is
   topology/fingerprinting, not reachability; but this is the
@@ -55,11 +55,11 @@ names, long base64 runs, `192.168.`, personal-mail domains,
 
 ### OPS-S3 — Personal username in absolute home paths — MINOR, MUST-FIX before public, effort S
 - 4 lines, 2 files: `experiments/wave3/driver/driver.log`
-  (`~/image-studio/outputs/…`, three lines of
+  (`/home/caseydigennaro/image-studio/outputs/…`, three lines of
   run log) and `docs/FEASIBILITY.md`. The username is the owner's
   real name in machine form. Redact to `~/…` in the log excerpt or
   drop the log file (its numbers are quoted in the wave-3 docs).
-- Related, fine-as-is: `~/…` paths in
+- Related, fine-as-is: `/home/hatch/…` paths in
   `experiments/wave3/jev/*.py` are this VM's agent home, not the
   owner's; first-name "Casey" mentions throughout are the public
   persona the repo is published under.
@@ -225,8 +225,8 @@ not this project's: 0.04%).
    learns `__pycache__/`/`*.pyc`/`.env`, and history needs a
    scrub before the flip, not after.
 3. **OPS-S2 — Home LAN addressing in docs** (MAJOR, S): the
-   Thor's <thor-lan-ip> in six duplicated spec copies and the
-   phone's <lan-ip> in INSTALL.md — replace with names/
+   Thor's 192.168.0.78 in six duplicated spec copies and the
+   phone's 192.168.0.105 in INSTALL.md — replace with names/
    placeholders before public.
 4. **OPS-T1 — Wedged gst-launch (D-state) + parked parent on
    the Thor** (MAJOR, S): a dead V4L2 session from today's

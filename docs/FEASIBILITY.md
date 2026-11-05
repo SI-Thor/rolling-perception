@@ -1,6 +1,6 @@
 # THOR-FEASIBILITY — Rolling Perception on AGX Thor (read-only probe)
 
-Date: 2026-11-01 (AKST) · Method: SSH via `~/workspace/ssh/thor.config` (`thor`, user `<operator>`), read-only except one throwaway compile/run in `/tmp/rp-probe` on the Thor, deleted and verified gone afterwards. No installs, no service changes, nothing written outside `/tmp` on the Thor.
+Date: 2026-11-01 (AKST) · Method: SSH via `~/workspace/ssh/thor.config` (`thor`, user `caseydigennaro`), read-only except one throwaway compile/run in `/tmp/rp-probe` on the Thor, deleted and verified gone afterwards. No installs, no service changes, nothing written outside `/tmp` on the Thor.
 
 ## Hard numbers (measured, not from docs)
 

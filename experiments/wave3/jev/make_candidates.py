@@ -13,7 +13,7 @@ recompute from the verdicts + fixture records.
 """
 import json, sys
 
-BASE = "~/workspace/rolling-perception-work/wave3/jev"
+BASE = "/home/hatch/workspace/rolling-perception-work/wave3/jev"
 rows = [json.loads(l) for l in open(f"{BASE}/verdicts.jsonl")]
 truth = {}
 for l in open(f"{BASE}/fixture.jsonl.truth.jsonl"):

@@ -16,7 +16,7 @@ spec = importlib.util.spec_from_file_location("jev", jev_path)
 jev = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(jev)
 
-BASE = "~/workspace/rolling-perception-work/wave3/jev"
+BASE = "/home/hatch/workspace/rolling-perception-work/wave3/jev"
 QUESTION = {
     "instructions": "Is this a real scene change in this tile, rather than noise, a lighting shift, or sensor jitter?",
     "type": "noul",

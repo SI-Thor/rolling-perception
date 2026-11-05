@@ -481,12 +481,12 @@ From AUDIT-OPS, re-verified against this tree:
   the publish (§9), not before — the repo is private and the
   blobs carry only build paths.
 - **Home-LAN addresses in shipped docs — MAJOR, S.**
-  `<thor-lan-ip>` (the Thor) in: `docs/SPEC-STREAM-PLATFORM.md`,
+  `192.168.0.78` (the Thor) in: `docs/SPEC-STREAM-PLATFORM.md`,
   `slice1/PROART-CAMERA.md`, and the duplicated spec copies
   `slice2/panel-2/_prefix.md` + `slice2/panel-2/q1-presence-brain.md`,
   `q2-session-budget.md`, `q3-synthesiser-risk.md`,
   `q4-technician-failure.md` (the panel prefix is the spec text
-  duplicated — one fact, six homes). `<lan-ip>` (a personal
+  duplicated — one fact, six homes). `192.168.0.105` (a personal
   phone) in `slice1/install/INSTALL.md` (three occurrences,
   the IP-Webcam example). RFC1918 — not routable, but it is the
   owner's home topology and a personal device. Replace with

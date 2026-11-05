@@ -1,8 +1,8 @@
 # rolling-perception
 
-**Status: experimental, in active construction (2026-11-01).**
-It was built and proven on the fleet's AGX Thor and is published
-under the SI-Thor rule: public when it is working and useful.
+**Status: PRIVATE — experimental, in active construction (2026-11-01).**
+This repo graduates to public only when it is working and useful on our
+AGX Thor and the documentation is polished (the SI-Thor rule).
 
 Rolling perception is the honest rebuild of a seed idea: *don't batch the
 world into frames.* Sensors and model stages become ready at staggered

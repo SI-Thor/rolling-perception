@@ -1,11 +1,11 @@
-[15:19:17] seq A: 12 frames from ~/image-studio/outputs/burst_1792818193_b512cd_f00.png .. ~/image-studio/outputs/burst_1792818193_b512cd_f11.png, shape (512, 512, 3)
+[15:19:17] seq A: 12 frames from /home/caseydigennaro/image-studio/outputs/burst_1792818193_b512cd_f00.png .. /home/caseydigennaro/image-studio/outputs/burst_1792818193_b512cd_f11.png, shape (512, 512, 3)
 [15:19:17] seq B: 12 frames extracted from dock-turntable.webp (centre-crop 540x540 -> 512x512)
 [15:19:17] seq C: interleaved A/B, 12 frames, every boundary a known cut
 [15:19:20] diff distribution over 528 tile-steps: min=3.448 p25=30.001 median=50.059 p75=69.431 p95=101.830 max=147.875
 [15:19:20] THRESHOLD (calibration rule: pooled median of all tile diffs) = 50.059
 [15:19:32] first embed call (includes I-JEPA lazy load): 11.9s
-[15:21:19] strategy ALL: 576 embeds, wall 119.6s -> ~/rolling-perception-play/wave3/embeddings_ALL.jsonl
-[15:22:15] strategy CHANGED: 312 embeds, wall 55.0s -> ~/rolling-perception-play/wave3/embeddings_CHANGED.jsonl
+[15:21:19] strategy ALL: 576 embeds, wall 119.6s -> /home/caseydigennaro/rolling-perception-play/wave3/embeddings_ALL.jsonl
+[15:22:15] strategy CHANGED: 312 embeds, wall 55.0s -> /home/caseydigennaro/rolling-perception-play/wave3/embeddings_CHANGED.jsonl
 [15:22:25] audit: 60 skipped tiles embedded anyway in 10.5s; prev-frame cosine drift: mean=0.2019 p50=0.1453 p95=0.5348 max=0.6260
 [15:22:25] skipped tiles: 264 total; their diff scores: mean=30.112 max=49.911
 [15:22:25] summary written: {"threshold_rule": "pooled median of all tile diffs", "threshold": 50.059274673461914, "rack_embed_latency_s_excl_first_load": {"n": 887, "p50": 0.1727923339985864, "p95": 0.2004633056003513, "mean": 0.18246434594361247}, "strategy_ALL": {"embeds": 576, "wall_s": 119.60674811100034}, "strategy_CHANGED": {"embeds": 312, "wall_s": 55.04402247500002}, "audit": {"n": 60, "drift_mean": 0.20191356790403173, "drift_p50": 0.1452779709414665, "drift_p95": 0.5348350986642505, "drift_max": 0.6259897372406864}, "skipped_total": 264}
