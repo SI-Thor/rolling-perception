@@ -140,30 +140,61 @@ It is where the cascade's cadence tiers and the tenancy ladder become social:
   the ledger; their rate per citizen is a health signal for the scripts
   themselves (§6).
 
-## 5. Layer 3 — Minds: local first, metered, rotating
+## 5. Layer 3 — Minds: System Two in the head, System Three in the world
 
-- The community's routine thought runs on **local models on the Thor**,
-  rotating with load and role (the presence brain — Qwen3-Coder-30B — is the
-  first seated mind; Dory, the looped model, is the designated refiner class:
-  a model whose *depth* is a dial, seated over text digests with loop-count
-  receipted per verdict, per DORY-SMOKE-1's findings).
+Casey's terminology, adopted as the architecture's own (recorded 2026-11-05):
+
+- **System One** is the sub-verbal machinery: reflex algorithms and the
+  decision engines that score and choose without words.
+- **System Two is the voice in the head.** A fast local model — the fast
+  Qwen coder is the type specimen — that a citizen can call *inside* the
+  rotation, mid-task, without leaving the world. Its defining job is
+  **putting words to what System One is doing**: narrating the decision
+  engine's choice, conjuring a plan fragment from what's at hand, explaining
+  the citizen to itself and to others. It thinks quickly, locally, and
+  cheaply enough to be part of play rather than an interruption of it.
+  Because it verbalises, it is also what makes citizens legible — to the
+  digest, to the ledger, to each other, and to a human watching.
+- **System Three is calling on the world.** The heavyweight minds and
+  resources outside the agent: the subscription LLMs, research, a message
+  sent to another agent or a human whose answer comes back later. Casey,
+  from the days before agents: pulling out your phone, searching, emailing
+  somebody and waiting — something outside of you. A super instance. System
+  Three breaks the frame: it is asynchronous, expensive, and receipted as
+  the rare event it should be.
+
+The tiers recurse: to a citizen, a smith is System Three; a smith has its
+own System Two voice, and its System Three is the subscription fleet — and
+Casey. Every tier is the world to the tier below it.
+
+- The community's routine System-Two thought runs on **local models on the
+  Thor**, rotating with load and role (the presence brain — Qwen3-Coder-30B,
+  the fastest coder measured on this box — is the first seated System Two;
+  Dory, the looped model, is its deep end: a model whose *depth* is a dial,
+  so how hard the inner voice thinks before it speaks is itself a budgeted
+  choice, loop-count receipted per verdict, per DORY-SMOKE-1's findings).
 - All mind access passes through **the governor**: a proxy that meters
   calls and mind-seconds per agent against a rolling-hour budget, receipts
   every call, and refuses over-budget agents with a shaped refusal the
   bodies are designed to degrade gracefully from (Craftmind falls back to
   canned behaviour by design). Built and live 2026-11-05; first receipts
   written the same day.
-- **Above the local tier**, the subscription seats and APIs (Claude,
-  MiniMax, ZCode, Kimi; Typesafe/Jev strictly as an advisor *sense*, never a
-  gate) are the expensive minds, bought with the same budgeting discipline:
-  a call upward is a decision the ledger can explain.
+- **System Three**, the subscription seats and APIs (Claude, MiniMax,
+  ZCode, Kimi; Typesafe/Jev strictly as an advisor *sense*, never a gate),
+  is bought with the same budgeting discipline one level up: a call out to
+  the world is a decision the ledger can explain, and its answer arrives on
+  the world's schedule, not the rotation's.
 - Model rotation is a policy surface, not an accident: which mind serves
   which class at which hour is recorded, so the society's cognitive history
   is auditable — a verdict can always be traced to the mind that made it.
 
-## 6. Layer 4 — System Two: the smiths and the improvement loop
+## 6. Layer 4 — The smiths and the improvement loop
 
-The top layer does not play. It maintains the repertoire.
+The top layer does not play. It maintains the repertoire. (In the §5
+terminology the smiths act as System Three *to the citizens* — called on,
+asynchronous, consequential — while running their own System Two voices
+locally and treating the subscription fleet, and Casey, as their System
+Three.)
 
 - **The charter:** judge whether the current rotation — the set of scripts,
   classes, cadences, and budgets — is good, and upgrade it. Concretely:
