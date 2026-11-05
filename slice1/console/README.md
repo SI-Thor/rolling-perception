@@ -24,17 +24,69 @@ heartbeat ever) renders AMBER "NOT REPORTING" — never silently
 green. Porch-cam behaviour in the fixture test proves the
 no-heartbeat case also goes amber.
 
-Corrections: the "That wasn't a change" button POSTs to
-`/api/correct`, which appends one JSON line to
-`ledger/attention/corrections.jsonl` — the trust-metrics
-feedstock (SPEC §C2.2/2.5). Verified live on the Thor: POST
-returned ok and the line landed in the file.
+Corrections: every feed entry carries TWO buttons — "That wasn't
+a change" and "That mattered" — the ground-truth labels §2.2's
+demotion rule consumes (SPEC §C). Both POST to `/api/correct`,
+which validates the value (`not-a-change` | `mattered`; anything
+else is a 400 — a label the roll-up cannot read is a silent
+label), appends one JSON line to
+`ledger/attention/corrections.jsonl`, and locks both buttons for
+that entry (one judgement per event, last tap wins in the
+roll-up). Verified live on the Thor against the pre-tap console:
+POST returned ok and the line landed in the file.
+
+## Trust loop: the §2.2 demotion rule, built (2026-11-05)
+
+`trust.py` closes spec-debt #1 to the paper test's design
+(docs/TRUST-LOOP-PAPER-TEST.md §2/§6; its §4 SYNTHETIC worked
+example is the fixtures in test_trust.py, line-by-line).
+
+What runs: `python3 trust.py <ledger_dir> [stream ...]` — the
+evaluation pass (daily by timer; nothing here schedules it yet).
+Per stream it reads `attention/corrections.jsonl`, the stream's
+`events.jsonl`, and the optional `attention/frozen-spans.jsonl` /
+`attention/era-markers.jsonl` inputs, and computes the single
+roll-up (`trust.rollup` — the one definition; the CLI, the state
+file and the receipts all project it): taps in the trailing 7 d,
+deduped by event_id (last tap wins); φ = mattered/(mattered +
+dismissed) over the judged set ONLY — unjudged events are absent
+from the denominator, never silently either side; status
+UNJUDGED (n = 0) / INSUFFICIENT (0 < n < 10) / HEALTHY (φ ≥ 0.9)
+/ DECAYED; demote to feed-only on 2 consecutive decayed daily
+evaluations, restore on 7 consecutive healthy ones.
+
+What it writes: a `trust_status` service row in the stream's
+events.jsonl ONLY on a transition (demote / restore / era_reset —
+yield is a receipted event, never a silent degradation), and
+`ledger/attention/trust-state.json` (per-stream n, precision,
+status, mode, feed_fault count). Idempotent: a re-run with no new
+taps appends nothing and rewrites nothing.
+
+What UNJUDGED means: nobody has judged anything in the window.
+The soak's own state today: 1,675 events, corrections = none →
+the pass publishes UNJUDGED, not 1.000 — a stream nobody
+corrects is never certified by its own quiet (the sparsity
+fence; the paper test's §5).
+
+v0 input honesty: slice 1's watcher emits no frozen-span
+receipts and no recalibration stamps yet, so in production today
+the span list is EMPTY and the era marker is the stream's start
+row. The feed-fault routing and era fencing are live code,
+fixture-tested (test_trust.py); their inputs simply stay empty
+until the watcher ships them — `frozen-spans.jsonl`
+({"start","end"} epoch-s lines) and `era-markers.jsonl`
+({"ts","what"} lines) are the accepted shapes, read if present.
+Not wired here: watcher-side frozen receipts are named future
+input, deliberately out of this slice.
 
 Files: `app.py` (backend + /api/state + /api/correct +
 traversal-guarded /files), `index.html` (feed / shelf / health),
-`make_fixtures.py` (builds the Thor test fixture from wave-3
-verdicts + real frames), `test_console.py` (regression tests —
-see the defect-fix section below).
+`trust.py` (the trust roll-up + evaluation pass), `make_fixtures.py`
+(builds the Thor test fixture from wave-3 verdicts + real frames),
+`test_console.py` (regression tests — see the defect-fix section
+below), `test_trust.py` (trust-loop fixtures: the paper test's §4
+tables, sparsity, dedup, window edge, hysteresis, feed-fault,
+era fence, idempotency).
 
 ## 2026-11-02 — defect fix: the feed dropped the watcher's verdicts
 

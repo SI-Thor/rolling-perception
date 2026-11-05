@@ -109,5 +109,26 @@ check("known event_id -> 200", ok.status_code == 200, f"got {ok.status_code}")
 corr = LED / "attention" / "corrections.jsonl"
 check("correction appended", corr.exists() and "cam1:4" in corr.read_text())
 
+# The mattered tap: the confirmation side of the ground-truth labels
+# (SPEC §C; the trust roll-up's other citizen).
+mat = client.post("/api/correct", json={"stream": "cam1", "event_id": "cam1:7",
+                                        "correction": "mattered"})
+check("mattered tap -> 200", mat.status_code == 200, f"got {mat.status_code}")
+check("mattered recorded with its value",
+      '"correction": "mattered"' in corr.read_text() and "cam1:7" in corr.read_text())
+bad_val = client.post("/api/correct", json={"stream": "cam1", "event_id": "cam1:4",
+                                            "correction": "bogus"})
+check("correction value outside the two labels -> 400", bad_val.status_code == 400,
+      f"got {bad_val.status_code}")
+
+# The trust pass over the console's own fixture ledger.
+import trust  # noqa: E402
+t = trust.evaluate_stream(LED, "cam1")
+check("trust pass runs on this ledger (2 taps, 1 of each -> n=2)",
+      t["n"] == 2 and t["m"] == 1 and t["d"] == 1 and t["status"] == "insufficient",
+      f"got {t}")
+check("trust pass wrote trust-state.json",
+      (LED / "attention" / "trust-state.json").exists())
+
 print(f"\n{len(fails)} failure(s)" if fails else "\nALL PASS")
 sys.exit(1 if fails else 0)

@@ -25,6 +25,8 @@
   .tile { position:absolute; background:var(--red); border:1px solid rgba(255,90,70,.9); }
   button.correct { background:none; border:1px solid var(--line); color:var(--dim); border-radius:6px;
                    padding:5px 10px; cursor:pointer; font-size:13px; margin-top:8px; }
+  .correct-pair { display:inline-flex; gap:6px; margin-top:8px; }
+  .correct-pair button.correct { margin-top:0; }
   button.correct:hover { color:var(--txt); border-color:var(--dim); }
   button.correct.done { color:#7ddc8a; border-color:#7ddc8a; cursor:default; }
   .empty { color:var(--dim); padding:10px 20px; }
@@ -82,15 +84,22 @@ function renderFeed(feed){
       <div class="when">${esc(fmtTs(ev.ts))} · ${esc(ev.stream)}</div>
       <div class="line">${esc(ev.line)}</div>
       <div class="detail">${esc(bits.join(' · '))}</div>
-      <button class="correct" data-ev='${esc(JSON.stringify({stream:ev.stream, event_id:ev.id, frame:ev.frame, tiles:ev.tiles}))}'>That wasn't a change</button>
+      <span class="correct-pair" data-ev='${esc(JSON.stringify({stream:ev.stream, event_id:ev.id, frame:ev.frame, tiles:ev.tiles}))}'>
+        <button class="correct" data-correction="not-a-change">That wasn't a change</button><button class="correct" data-correction="mattered">That mattered</button>
+      </span>
     </div></div>`;
   }).join('');
-  document.querySelectorAll('button.correct').forEach(b => b.addEventListener('click', async () => {
-    const payload = JSON.parse(b.dataset.ev);
-    const r = await fetch('/api/correct', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-    if(r.ok){ b.textContent = 'Recorded — thank you'; b.classList.add('done'); b.disabled = true; }
-    else { b.textContent = 'Could not record — try again'; }
-  }));
+  document.querySelectorAll('.correct-pair').forEach(pair => {
+    const payload = JSON.parse(pair.dataset.ev);
+    const mark = (txt) => pair.querySelectorAll('button.correct').forEach(b => {
+      b.textContent = txt; b.classList.add('done'); b.disabled = true; });
+    pair.querySelectorAll('button.correct').forEach(b => b.addEventListener('click', async () => {
+      const r = await fetch('/api/correct', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(Object.assign({}, payload, {correction: b.dataset.correction}))});
+      if(r.ok){ mark('Recorded — thank you'); }
+      else { b.textContent = 'Could not record — try again'; }
+    }));
+  });
 }
 
 function renderShelf(items){

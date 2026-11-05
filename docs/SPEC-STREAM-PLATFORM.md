@@ -1291,6 +1291,32 @@ The feed is pull; alerts are push, and push is rationed.
   default household quiet window suppresses all but rules marked
   "wake me" (default: none are).
 
+**Implementation (2026-11-05, slice1/console — the demotion rule is
+code):** `trust.py` implements this section's demotion sentence to
+the design of `docs/TRUST-LOOP-PAPER-TEST.md` (which found the rule
+as worded carried eight unimplemented pieces and specified them).
+Settled **in code**: the denominator (judged events only —
+unjudged events are absent, never silently either side), the
+minimum-evidence guard (`N_MIN = 10` → INSUFFICIENT, below which no
+decision can fire), the restore rule (7 consecutive healthy daily
+evaluations, against demote's 2 — hysteresis), the evaluation pass
+(`python3 trust.py <ledger>`; daily by operator timer), the
+receipts (a `trust_status` service row per transition + 
+`attention/trust-state.json`), the "That mattered" tap (both labels
+of the ground truth now ship in the console), feed-fault routing
+(taps on events inside a receipted frozen span count as feed fault,
+never against φ), and the era fence (pre-era taps stop convicting
+at an era marker; the change receipts `era_reset`). Settled **by
+convention, config-exposed, per the note's own choices**: the
+window (trailing 7 d, §3.3's figure), N_MIN, both sustains, daily
+cadence. **Still v0-empty inputs:** the watcher emits no frozen-span
+receipts and no recalibration stamps yet, so production runs with
+an empty span list and the start-row era — the routing is live and
+fixture-tested, its inputs arrive with the watcher (accepted
+shapes: `attention/frozen-spans.jsonl`, `attention/era-markers.jsonl`).
+Out of scope by the paper test's ruling: any automatic threshold
+adjustment, and lens-exemplar writing from corrections.
+
 ### 2.3 Cross-stream rules and actions
 
 Rules connect a verdict on one stream to an action on another.

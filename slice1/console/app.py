@@ -283,6 +283,14 @@ async def api_correct(req: Request):
     sid, eid = str(body.get("stream", "")), str(body.get("event_id", ""))
     if not sid or not eid:
         return JSONResponse({"ok": False, "error": "stream and event_id required"}, status_code=400)
+    # The two taps are symmetric citizens of the same file (SPEC §C's
+    # "That's not a change" / "That mattered"): the ground-truth labels
+    # §2.2's demotion rule consumes. Anything else is refused — a
+    # correction value the trust roll-up cannot read is a silent label.
+    correction = body.get("correction") or "not-a-change"
+    if correction not in ("not-a-change", "mattered"):
+        return JSONResponse({"ok": False, "error": "correction must be not-a-change or mattered"},
+                            status_code=400)
     sdir = LEDGER / "streams" / sid
     known = {ev["id"] for ev in stream_events(sdir, sid)} if sdir.is_dir() else set()
     if eid not in known:
@@ -290,7 +298,7 @@ async def api_correct(req: Request):
     adir = LEDGER / "attention"
     adir.mkdir(parents=True, exist_ok=True)
     rec = {"ts": time.time(), "stream": sid, "event_id": eid,
-           "correction": body.get("correction") or "not-a-change",
+           "correction": correction,
            "frame": body.get("frame"), "tiles": body.get("tiles")}
     with open(adir / "corrections.jsonl", "a") as f:
         f.write(json.dumps(rec) + "\n")
