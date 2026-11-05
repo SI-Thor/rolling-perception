@@ -82,7 +82,12 @@ sources and deficits, is in `docs/RESULTS.md`.
 
 The design documents live in `docs/`; `docs/ARCHITECTURE.md` is the
 engine's reference and `docs/SPEC-STREAM-PLATFORM.md` specifies the
-stream platform. `docs/READING-GUIDE.md` maps the whole library.
+stream platform. `docs/ARCH-AGENT-COMMUNITY.md` is the top-level design
+for the agent-community programme — one rolling percept of a shared
+world, citizens drinking from it at earned temporal resolutions, and
+System-Two smiths maintaining the repertoire — and `docs/CRAFTMIND-MAP.md`
+maps the existing agent frameworks it builds on. `docs/READING-GUIDE.md`
+maps the whole library.
 
 ## Quick start
 
