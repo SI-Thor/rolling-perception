@@ -5,7 +5,7 @@ name: CI
 # aarch64; GitHub's arm runners are the closest public proxy — they do
 # NOT replace the on-Thor verification in docs/THOR-VERIFICATION.md).
 #
-# Status: prepared in wave-2 polish, NOT yet pushed/enabled.
+# Status: live. This workflow runs on pushes and pull requests to main.
 # Casey decides when this lands in the repo.
 
 on:

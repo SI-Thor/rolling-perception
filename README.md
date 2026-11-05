@@ -1,174 +1,175 @@
 # rolling-perception
 
-**Status: PRIVATE — experimental, in active construction (2026-11-01).**
-This repo graduates to public only when it is working and useful on our
-AGX Thor and the documentation is polished (the SI-Thor rule).
+A continuous perception substrate and stream platform for edge
+hardware, built and measured on the NVIDIA Jetson AGX Thor. Batch
+pipelines wait for a full frame — or a full set of stages — before
+any work starts, and pay that wait on every cycle. Rolling
+perception removes the wait: each stage processes its input as it
+lands and emits output per stage completion, so the system perceives
+a continuous stream instead of a stepped sequence of frames. For
+identical work, first output arrives an order of magnitude earlier,
+and the compute budget is spent only where the scene actually
+changed.
 
-Rolling perception is the honest rebuild of a seed idea: *don't batch the
-world into frames.* Sensors and model stages become ready at staggered
-times; a system that processes each stage as it lands and emits an output
-per stage completion perceives a **continuous stream** instead of a
-stepped sequence — with measurably earlier first outputs for identical work.
+## What it does
 
-## Where this stands (2026-11-01, evening)
+- **Rolling cascade (Rust).** A five-stage pipeline —
+  perceive → decide → direct → refine → publish — wired through
+  lock-free single-producer/single-consumer rings. Stages run as
+  inputs land; nothing waits for a batch boundary. Output checksums
+  are bit-identical to the batched schedule on both x86_64 and
+  aarch64: rolling changes *when* results arrive, not *what* they
+  are.
+- **Hot-swappable GPU kernels (Thor).** CUDA kernels are compiled
+  from Rust via NVRTC at runtime and swapped at launch boundaries,
+  with epoch retirement of superseded modules. Two-stream shadow
+  execution is the default scheduling mode.
+- **Confluence stream platform.** A watcher service
+  (`confluence-watch`) consumes camera streams on the Thor, embeds
+  only the tiles whose content changed (diff-gating), and writes a
+  text ledger of verdicts, state, and health. A web console renders
+  the ledger, shows per-stream health with a heartbeat (a silent
+  stream is reported as not-reporting, never as calm), and accepts
+  human corrections. Work is budgeted in embed-seconds per stream.
+- **Presence.** A browser lends the Thor its camera, microphone, and
+  speaker; the Thor is the only mind. Spoken questions about the
+  watched scene ("what changed in the last hour?") are answered from
+  the ledger, and every factual claim in the answer is checked
+  against the ledger by deterministic code before it is spoken.
+  Nothing leaves the house.
+- **Adaptive scheduling.** Per-lane timing self-models (period,
+  jitter, phase) calibrate stagger and gating to each sensor's real
+  cadence instead of a fixed frame clock.
 
-The engine grew a product. **Confluence** — a Thor as the back-end
-superpower for thin devices, every stream a cell in a graph — is
-specified in `docs/SPEC-STREAM-PLATFORM.md` (plus Amendments 1–2) and
-its first three slices are built and measured:
+## Measured results
 
-- **Slice 1 is live**: `confluence-watch` watches a real camera
-  (the ProArt's webcam, standing in for a phone) and is inside a
-  **48-hour soak** (2026-11-01 18:18 → 2026-11-03 18:18 AKST).
-- **Slice 2**: presence (a browser lends the Thor its mic and speaker;
-  the voice loop is claim-checked before it speaks) and a budgeted
-  HLS player, both acceptance-tested.
-- **Slice 3**: the library shelf holds 234 real items, and the
-  synthesiser experiment shows maintained world state beating held
-  samples 8–18× for late readers.
+All numbers below are measured on hardware; the full record, with
+sources and deficits, is in `docs/RESULTS.md`.
 
-**Start with `docs/READING-GUIDE.md`** for the map, and
-**`docs/RESULTS.md`** for every headline number with its source —
-deficits included at the same prominence as the wins.
-**The engine's own book is `docs/ARCHITECTURE.md`** — crate map,
-claim→proof tracing, invariants ledger.
+| Measurement | Result |
+|---|---|
+| Time to first output, rolling vs batched (identical work) | 243.5 µs vs 2,528.6 µs — **10.39×** earlier |
+| Output equivalence | Checksums bit-identical across schedules and across x86_64 / aarch64 |
+| SPSC ring throughput | 6.7–11.4M messages/second |
+| Cascade proof sweep | 1,000,000 / 1,000,000 frames published, zero drops |
+| 48-hour live camera soak | 26.36 live hours recorded; gated embedding spend **4.43%** of embedding every frame |
+| Diff-gating on real footage | Roughly half the embeddings of the ungated pipeline for the same verdicts |
 
-**Run it cold, on any machine (two minutes):** `cargo test --release`
-at the repo root runs all **107 tests** — including the wave-3
-cascade and the Slice-1 live service replayed over a generated
-fixture (`harbor_watch::fixture`), no camera, rack or Thor
-required — and the bench in *Quickstart* below shows rolling
-beating batched on your own hardware. That is the stranger's
-path; the rest of this repo is the record of how it was proven
-on the Thor (a fresh-clone rehearsal of this door is logged in
-`slice1/install/REHEARSAL-LOG.md`).
+## Architecture
 
-## Prerequisites
+- `rolling-substrate-core` — the SPSC ring (the cascade's only
+  transport; an earlier queued design tore messages under load and
+  was replaced), real Laplacian consistency checks, and bitmask
+  lineage that records which stages touched each item.
+- `rolling-pipeline` — the five-stage cascade over the substrate,
+  with the director's gating decisions feeding the next cycle.
+- `rolling-perception` — the scheduling core: batched vs rolling
+  execution of identical lanes, used by the bench below.
+- `rolling-adaptive` — lens-calibrated adaptive staggering.
+- `cuda-thor` — NVRTC-from-Rust compilation and launch-boundary
+  kernel swap for the Thor's sm_110 GPU.
+- `harbor-watch` — change detection over real image embeddings
+  (I-JEPA tiles): diff-gate, smooth, refine. The refine step is a
+  sheaf-consistency pass; the semantic judge layer is advisory only
+  and never gates.
+- `slice1/core` (`confluence-watch`) — the production-form watcher
+  service: ingest, gating, embedding, ledger, tenancy ladder (the
+  watcher yields the shared GPU to foreign work in defined steps),
+  and per-stream budget enforcement.
+- `slice1/console`, `slice2/presence`, `slice2/player` — the Python
+  services: ledger console, presence voice Q&A, and the budgeted
+  HLS/fMP4 stream player.
 
-- **Rust, stable, edition 2021** (developed/tested on rustc 1.99.1; any
-  recent stable should work). No external crates — std only, so no
-  network fetch is needed to build.
-- **For the CUDA experiments only:** an NVIDIA AGX Thor (sm_110) with
-  CUDA 13.2 (`nvcc`). The Rust workspace builds and tests anywhere,
-  including x86_64.
+The design documents live in `docs/`; `docs/ARCHITECTURE.md` is the
+engine's reference and `docs/SPEC-STREAM-PLATFORM.md` specifies the
+stream platform. `docs/READING-GUIDE.md` maps the whole library.
 
-## Quickstart (tested literally — the Rust half on any machine; the Thor pass is `docs/QUICKSTART-TEST.md`, a dated wave-2 record)
+## Quick start
 
-The Rust workspace below runs verbatim on a desktop machine —
-it was re-verified cold on a plain dev VM from a fresh clone
-(`slice1/install/REHEARSAL-LOG.md`). On the Thor over SSH,
-`cargo` and `nvcc` are **not on the default (non-login) PATH**.
-Set this first, or every command below fails with
-`command not found`:
+The Rust workspace builds and tests on any machine (stable Rust,
+edition 2021; the core crates are std-only). The GPU crates require
+the Thor.
+
+```sh
+cargo test --release
+cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
+# prints batched and rolling timings for identical work, ending with
+# the time-to-first-output ratio and a checksum delta of 0
+```
+
+On the Thor over SSH, cargo and nvcc are not on the default PATH:
 
 ```sh
 export PATH=$HOME/.cargo/bin:/usr/local/cuda/bin:$PATH
 ```
 
-From the **repository root**:
+The watcher service runs from a config file (format and worked
+examples in `slice1/`):
 
 ```sh
-cargo test --release
-# expect: 107 passed total — 6 (rolling-perception) + 55 (rolling-substrate-core:
-#         unit + seeded property tests + sheaf allocation proofs + the §3.2
-#         SPSC ring + the D9/D10 sheaf refusals) + 17 (rolling-pipeline: incl.
-#         the 1M-message ring stress proof + replay bit-identity) + 6 (rolling-adaptive)
-#         + 12 (cuda-thor CPU: reference + property + the generic launch API;
-#         its GPU tests need the Thor, see crates/cuda-thor)
-#         + 8 (harbor-watch, the wave-3 real-workload crate) + 3 (slice1/core: confluence-watch live service)
-
-cargo run --release -p rolling-perception -- --cycles 120 --stagger-us 400
-# expect two passes — a measured pass and a reported pass — each
-# printing a batched and a rolling line, ending with:
-#   ttfo ratio (batched / rolling): <roughly 3x-16x, machine-dependent>
-#   checksum delta |batched - rolling|: 0.000000
-# Both schedulers' checksum is 345101.1999 on x86_64 and aarch64.
+cargo run --release -p confluence-watch -- --config confluence-watch.conf
 ```
 
-Scope, because the same words do different things in different folders:
-`cargo test` at the root tests **all** crates (107 tests); inside
-`crates/rolling-perception/` it tests 6; inside
-`crates/rolling-substrate-core/` it tests 55. `cargo run` needs
-`-p rolling-perception` at the root (or run it from that crate's folder).
-
-### CUDA experiments (Thor only)
+The Python services run under the Thor's ML environment; each has
+its own README with exact configuration:
 
 ```sh
-cd experiments/thor-cuda
-nvcc -O2 -arch=sm_110 exp1_rolling_vs_batched.cu -o exp1 && ./exp1
-nvcc -O2 -arch=sm_110 exp1b_small_lanes.cu     -o exp1b && ./exp1b  # exp1, small-lane regime
-nvcc -O2 -arch=sm_110 exp2_nvrtc_swap.cu -o exp2 -lnvrtc -lcuda && ./exp2
-nvcc -O2 -arch=sm_110 exp3_persistent.cu -o exp3_persistent && timeout 60 ./exp3_persistent
-nvcc -O2 -arch=sm_110 exp4_gating.cu       -o exp4  && ./exp4   # gating, early-exit blocks
-nvcc -O2 -arch=sm_110 exp4b_gating_grid.cu -o exp4b && ./exp4b  # gating, launch-shaped grid (the 192x version)
+~/ml/.venv/bin/python slice1/console/app.py      # ledger console (web UI)
+~/ml/.venv/bin/python slice2/presence/presence.py # presence voice Q&A, :8330
 ```
 
-`exp3_persistent` is safe to run: it serves 300 requests and stops
-itself via its stop flag (about 1.6 ms of work); the `timeout 60` is a
-belt-and-braces guard, and each experiment leaves nothing resident.
-What each experiment means, and the numbers to expect, are in
-`experiments/thor-cuda/PLAYLOG.md`. Formal run records live in
-`results/` (see `results/README.md`); release notes in `CHANGELOG.md`.
+CUDA experiments (Thor only, sm_110, CUDA 13.2) live in
+`experiments/thor-cuda/` with expected outputs in its `PLAYLOG.md`.
 
-## What is proven, and where (all numbers measured, none simulated)
+## telltape
 
-| Claim | Where | Result |
-|---|---|---|
-| Rolling beats batched on time-to-first-output, same work | `crates/rolling-perception` (CPU, std-only Rust) | TTFO 243 µs vs 2,529 µs at 400 µs stagger (**10.4×**); 35× at 2 ms stagger; 2.9× at zero stagger. Checksums identical (Δ = 0). 6/6 tests pass. |
-| Same claim on the GPU | `experiments/thor-cuda` exp1 | Rolling outputs at 5.74 / 11.04 / 16.32 / 21.28 ms vs batched's single 21.41 ms (**3.7×** earlier first output). Total completion unchanged — a continuity win, not throughput. |
-| Runtime kernel compilation + swap (sm_110) | exp2 | NVRTC compile 30–54 ms off-path, swap at launch granularity, outputs verified. No mid-kernel splicing — that claim is dropped. |
-| Persistent kernel as tick substrate | exp3 | One launch, 300 requests via pinned mapped memory, **4.8 µs mean request→ack**, mid-run behaviour swap exact, clean stop. |
-| Viewport gating | exp4 / exp4b | Early-exit blocks: 1.3×. Grid launched only over the ROI: **192×**, sentinel-verified zero outside touches. The gate decides what is *launched*. |
-| Thor feasibility (sm_110, NVRTC, CUPTI, Rust) | `docs/FEASIBILITY.md` | All measured on the box: capability 11.0, CUDA 13.2, Rust 1.99.1. CUPTI stall metrics are ncu replay metrics — telemetry here is self-measured. |
-| NVRTC from Rust + swap (v0.2 Spikes 1+3) | `crates/cuda-thor`, `results/thor/2026-11-01-spike1-3.txt` | Compile for compute_110 in 20–24 ms from Rust FFI; output **bit-exact** vs CPU reference. **1,000/1,000 launch-boundary swaps verified**, epoch retirement, no leak (structural gate — cuMemGetInfo swings ±150 MB on this shared box, so a byte-exact leak gate is unmeasurable and is not claimed). Control: sm_100 *PTX* runs (forward-compatible); sm_100 *CUBIN* fails, error 209. |
-| Launch vs shadow vs persistent (v0.2 Spike 2) | `results/thor/2026-11-01-spike2.md` | Launch pickup p50 1.1 µs. **Two-stream shadow is the recommended default** (same pickup, better wall: 3.6→3.0 ms big slices). Persistent kernel *loses* for slice work — its compute runs 9–27× slower (resident-grid starvation); its niche is the tiny-buffer ack path. Stream priorities: **no effect** (medians identical to 0.01 ms) — not a design dependency. |
-| Persistent soak, 10 min (Spike 2) | `experiments/thor-cuda/spike2/` | 600.1 s, 5,981 requests, buffer exact, clean flag stop, process verified gone. GPU 39→46 °C peak, ~8–9 W. Ack p50 5.4 µs at a realistic 100 ms cadence, p95 1.83 ms — the tail is reported, and a foreign all-core CPU burn mid-soak is attributed, not hidden. |
-| Integrated cascade end-to-end | `crates/rolling-pipeline` | perceive→decide→direct→refine→publish through real rings: published lineage = all 5 stages exactly once; gating saved **71.9%** of perceive ops (counted); sheaf energy 132.75→95.97; file-replay reproduces the synthetic run exactly. |
-| Lens-calibrated adaptive stagger | `crates/rolling-adaptive` | Per-lane LensFile (period/jitter/phase self-model as text). On jitter+drift traces: prediction p95 **1,669 µs vs 854,285 µs** fixed (fixed stagger's error compounds under drift); jitter-only: 11.4× and freshness 32%→57%. On zero-jitter traces: **exact tie** — stated, not spun. |
-| **Real workload: harbor-watch (wave 3)** | `crates/harbor-watch`, `docs/WAVE3.md`, `experiments/wave3/` | Real frames perceived by the Thor's own I-JEPA (p50 173 ms/embed): diff-gating spent **312 embeds vs 576** (−54% rack time) and follows ground truth per sequence (gradual turntable: 23/192 kept). Through the Rust cascade: **every scene cut flagged 16/16 tiles the frame it landed**; gradual rotation near-silent (2/192); frame verdicts agree between strategies 1.0000 on the cuts sequence. The gate is a ranker, not a separator (audit: skipped drift 0.20 vs embedded 0.48) — stated in `docs/WAVE3.md`, with the reflective Jev layer measured after all: it earns an advisory seat, not the gate (the sheaf refine, not the judge, fixed the false positives). |
+The change-detection core of this platform has been extracted into
+a standalone tool, **telltape**
+(https://github.com/SuperInstance/telltape) — a single-purpose
+watcher that indexes recorded or live footage into a queryable
+change ledger, with an embedder seam that keeps the core
+licence-clean. telltape is the hardened, separately versioned
+extraction (v0.3.2) and is the recommended route for the
+change-ledger capability on its own; this repository remains the
+research platform it was extracted from.
 
-## Layout
+## Repository map
 
-- `PLAN.md` — the real plan: keep / fix / drop grading of every seed idea,
-  v0.1 / v0.2 scopes, non-goals, and a pre-committed acceptance gate
-  (if rolling loses its home scenario, the negative result is the result).
-- `DESIGN.md` — module layout, slot protocol, invariants, failure modes.
-- `crates/rolling-perception` — CPU scheduling experiment (batched vs
-  rolling on identical lanes/work, plus the PCM audio lane).
-- `crates/rolling-substrate-core` — lock-free ring, real Laplacian
-  consistency, bitmask+counts lineage (with the seed's PIR kept as a
-  fenced autopsy), ROI gating.
-- `crates/rolling-pipeline` — the integrated cascade: all five stages
-  wired through the substrate rings, director deadband policy feeding
-  the next tick's gate, file-replay trace producer.
-- `crates/rolling-adaptive` — lens-calibrated adaptive staggering vs
-  fixed stagger on identical jittered/drifting traces.
-- `crates/cuda-thor` — v0.2 GPU executor (feature-gated, Thor-only):
-  NVRTC-from-Rust, launch-boundary module swap with epoch retirement.
-- `crates/harbor-watch` — wave 3: the first real workload. Rolling
-  change detection over real I-JEPA tile embeddings at full 1280-dim
-  on the substrate rings; see `docs/WAVE3.md`.
-- `experiments/wave3/` — the wave-3 driver (Thor, JEV rack), the
-  reflective-judge lane (TypeSafe Jev — measured: advisory seat, not the gate),
-  and the HTML report tool that renders verdicts for a human.
-- `experiments/thor-cuda` — the Thor play session, sources + `PLAYLOG.md`
-  (including the bench bug that lied, and how it was caught), plus the
-  Spike 2 sources and soak logs.
-- `results/` — dated, measured run records (`results/README.md` is the index).
-- `docs/FEASIBILITY.md` — what the Thor actually supports, measured.
-- `CHANGELOG.md` — release notes, including what each wave actually proved.
+- `crates/` — the Rust workspace crates listed above.
+- `slice1/` — watcher service, console, install scripts, soak record.
+- `slice2/` — presence voice Q&A and the stream player.
+- `slice3/` — the synthesiser: maintained world state for late
+  readers of a stream.
+- `experiments/` — Thor CUDA experiments and workload drivers.
+- `results/` — dated, measured run records.
+- `docs/` — architecture, specification, results, and the study
+  library (looped-model, weight-space, and auto-ontology studies
+  among them).
+- `PLAN.md`, `DESIGN.md`, `CHANGELOG.md` — design record.
 
-## The rule
+## Status and limitations
 
-No claim without a test or a bench number attached. Simulated numbers
-never share a table with measured ones. Process is documented in the
-body of the work as it happens (`PLAYLOG.md`, PLAN §0).
+This is a research platform, not a packaged product. The Rust
+cascade, the watcher service, and the console have been run live
+for days at a time on the Thor, including a 48-hour camera soak;
+the presence loop has passed from-the-chair acceptance on the
+hardware. Known limits, stated plainly:
 
-## Source
+- The diff-gate is a ranker, not a separator: it orders tiles by
+  change likelihood under a budget; it does not guarantee a
+  precision boundary. Per-stream precision depends on human
+  corrections collected through the console.
+- Presence currently runs over plain HTTP on the LAN; the
+  certificate story for a packaged installer is not solved.
+- The real-time, interruptible presence variant is designed
+  (`slice2/presence/V4-DESIGN.md`) but not built.
+- GPU components target the AGX Thor (sm_110) specifically; they
+  are not portable CUDA.
+- Several platform components (multi-stream reserved watching pool,
+  automatic trust-based demotion of miscalibrated streams) are
+  specified and partially built; see `docs/` for the state of each.
 
-Distilled from Casey's seed email *"Rolling perception [muse]"*
-(2026-11-01) — a 5,318-line multi-generation LLM chain. Roughly 15% of it
-was distinct ideas; this repo is what survived grading against the
-hardware. Seed claims that failed grading (sheaf clamp, PIR lineage,
-mid-kernel pointer splicing, sm_100 targets, <100 ns warp catch) are
-documented as drops in `PLAN.md`, not silently forgotten.
+## Licence
+
+Dual-licensed under either of MIT (`LICENSE-MIT`) or Apache-2.0
+(`LICENSE-APACHE`), at your option.
