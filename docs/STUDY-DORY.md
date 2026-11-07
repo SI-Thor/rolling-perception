@@ -1,5 +1,7 @@
 # STUDY — NVIDIA Nemotron-Labs Dory1.0-4B as a candidate component, and an experiment charter for cascading loop allocation
 
+**Status (2026-11-06):** the taps experiment chartered here has run; the full result is [DORY-TAPS.md](DORY-TAPS.md) — per-pass deltas contract strongly but uniformly and do not separate delivered from undelivered runs, so the internal settle signal is outcome-blind and loop allocation goes to an external/learned governor.
+
 Lane DORY STUDY, 2026-11-05. Study only: nothing was downloaded,
 nothing on the Thor was touched. Facts below come from primary
 sources — the Hugging Face model card and `config.json` for

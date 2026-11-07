@@ -1,1 +1,2 @@
 - 2026-11-06 — slice2/presence/B0-RESULT.md published: Presence v4 B0 spike result (cascade shape PASS on both budgets; the named /v1/realtime transport walled for the text brain); status line added to slice2/presence/V4-DESIGN.md.
+- 2026-11-06 — docs/DORY-TAPS.md published: Dory taps verdict (per-pass deltas contract strongly but uniformly; the internal settle signal is outcome-blind, so loop allocation goes to an external/learned governor); status line added to docs/STUDY-DORY.md and a dated addendum appended to docs/WSP-SYNTHESIS.md.

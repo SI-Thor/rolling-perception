@@ -590,3 +590,7 @@ the most architecture: precision first (hours), the writer question
 second (days), the settle instrument third, allocation fourth — and the
 programme degrades safely at every gate, each failure leaving a smaller,
 honest system standing rather than a larger, fictional one.
+
+## Addendum — Taps result (2026-11-06)
+
+*Addendum, appended after the fact; the synthesis above is untouched.* The taps experiment (DORY-TAPS.md: 36 runs, loops 2/3/4, both reasoning arms) confirms the physical premise the allocator section leans on: per-pass deltas contract strongly — median r3 = 0.23–0.31, 97–100% of tokens contracting at k=3, the contraction nearly exhausted by pass 4. But the contraction is uniform and outcome-blind: the r-vector features do not separate delivered from undelivered runs (pooled medians 0.333 vs 0.388) or correct from wrong at n=6 prompts, so an allocator reading the taps would see "settled" everywhere and learn nothing about delivery risk. The consequence for §6 is that the internal settle signal cannot serve as the allocation discriminator: the conservative allocator defaults stand as written, and the allocation signal must come from the external/learned governor — the contingency route the synthesis already named — rather than from per-pass delta features.
