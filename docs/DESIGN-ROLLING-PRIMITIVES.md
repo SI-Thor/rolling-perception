@@ -501,8 +501,261 @@ And the diff gate it replaces is µs-class CPU arithmetic with a
 decade of receipts in this programme; the predictor must beat
 that baseline at equal total spend, not merely be interesting.
 
-### 4.
-...[truncated 9113 chars]
+### 4.3 The invariant that binds harder here
+
+telltape carries one invariant earned the hard way, in this
+programme's own cold playtests: **B1 — silence is stamped
+meaningful only when the mechanism producing it has demonstrated
+discrimination on this run's actual inputs.** A zero-norm and
+then a collapsed embedder each produced confident, authoritative
+silence on real streams; the silence was believed because the
+mechanism's failure was invisible from inside it. B1 is the fix:
+no run's quiet is evidence until the run itself has shown that
+its instrument can tell change from no-change on the inputs it
+is actually judging.
+
+The predictor is a *stronger* silence-claimant than the gate,
+so B1 binds it harder. The gate's silence is a claim about
+measurement: no tile's drift crossed a threshold — and the
+threshold's separation is on record (0.48 in the embedded band
+against 0.20 among the skipped, §4.1), imperfect and *measured*,
+which is what makes the gate's quiet usable. The predictor's
+silence is a claim about the world *and* about the predictor:
+the interval matched my model of the stream. A predictor can
+satisfy that claim vacuously — predict persistence, predict the
+mean, decay into predicting whatever happened last — and its
+silence is then indistinguishable from success. The stronger
+the claimant, the stronger the demonstration B1 requires of it.
+
+The demonstration is a **per-run discrimination probe**, built
+into the run rather than calibrated once in a lab:
+
+- The run injects synthetic changes of known semantic weight
+  into its input — planted in the stream at marked positions —
+  alongside matched non-changes: intervals of comparable pixel
+  magnitude carrying no planted change.
+- The predictor's surprise must rank the planted changes above
+  the matched non-changes. Translated onto the surprise axis,
+  its separation must clear the gate's demonstrated separation
+  (the 0.48 / 0.20 bar) on the same inputs. Below that bar, its
+  silence is worth no more than the gate's — and the gate is
+  µs-class arithmetic.
+- The probe repeats during the run, not only at its start,
+  because the failure modes are per-run and per-era: this
+  stream's regularity, this predictor's staleness, this run's
+  collapse. A probe passed last week certifies nothing tonight.
+
+This is §1.2 applied to the claimant itself. The predictor,
+too, must be verified by something that is not the predictor,
+on the inputs it will actually judge — before its quiet is
+allowed to mean anything.
+
+### 4.4 The test that would change the verdict — the offline replay
+
+Application C is a verdict with a test attached, not a design
+with an experiment attached, and the test is deliberately the
+cheapest door in this document: offline, on recordings, at
+analysis cost only. Nothing in the live perception path changes
+while it runs.
+
+**Material.** Recorded streams the programme already holds —
+soak and validation recordings, with the gate's ledgered record
+of what they contained — into which two classes of synthetic
+change are planted:
+
+- **Class S — semantic, pixel-small.** Changes of meaning with
+  a small footprint: an object appears at small scale, a small
+  region changes state. Few pixels move; the stream's story
+  changes.
+- **Class N — semantic-null, pixel-large.** Lighting ramps,
+  cloud shadows, exposure shifts. Much of the frame moves;
+  nothing that matters happens.
+
+**Arms.** The diff gate against the predictor, at **equal
+total spend**. The predictor's per-interval inference and its
+probe costs are charged in full; the gate may spend the
+difference embedding more tiles — a lower threshold, a wider
+embedded band. Equal spend is the only honest comparison, and
+it is §4.2's cost argument made operational.
+
+**The verdict flips only if all of the following hold:**
+
+- the predictor detects Class S at a higher rate than the gate
+  at equal spend — it catches what the gate's budget misses;
+- the predictor suppresses Class N at a higher rate than the
+  gate — fewer false tells per unit of stream, at equal spend;
+- recall on unplanted, natural change is no worse than the
+  gate's beyond a pre-registered tolerance; and
+- the §4.3 probe is built and passing on these same recordings,
+  so the silence the predictor produces during the replay is
+  silence B1 permits anyone to interpret.
+
+Winning one planted class only is the expected failure shape,
+and it flips nothing. Suppressing Class N is easy for a
+predictor that leans on smoothness — which also suppresses
+Class S. Catching Class S is easy for a sensitive predictor —
+which also fires on Class N. The two classes are chosen so
+that no one-knob predictor wins both; only genuine discounting
+of change by predictability can. That asymmetry is the test's
+discriminating power, and it is the same demand B1 makes of
+every instrument in this programme: demonstrate, on these
+inputs, or do not be believed.
+
+### 4.5 Kill criteria
+
+- The §4.3 probe cannot be made to pass reliably on the
+  programme's real streams — no run of the predictor may stamp
+  its silence meaningful, so the variant cannot operate under
+  B1 at all, whatever its replay scores.
+- On replay inputs, the predictor's surprise separation does
+  not clear the gate's measured 0.48 / 0.20 bar — discrimination
+  asserted, not demonstrated.
+- At equal total spend, the predictor fails either planted
+  class — the semantic discount is not real on these streams,
+  in one direction or the other.
+- The predictor's per-interval cost, charged honestly
+  (inference plus probe), exceeds the embedding spend it saves
+  at matched recall — §1.2's condition failing inside the
+  perception loop: the machinery costs more than the work it
+  gates.
+- Natural-change recall falls below the gate's beyond the
+  pre-registered tolerance — the discount bought by blindness,
+  which is the cold-playtest failure in a new costume.
+
+### 4.6 Verdict
+
+**Not yet.** Until the replay is run and passed on both
+planted classes with the probe live, B1's default applies: the
+diff gate keeps the perception seat, silence means what the
+gate's measured separation says it means, and prediction-error
+perception stands as a recorded direction with a defined door —
+not a component. The door is guarded precisely because what
+would walk through it is the strongest silence-claimant the
+programme has ever considered. If it is ever built, it will be
+the first instrument here whose quiet claims the world matched
+a model of it; the evidence bar in §4.4 is set so that such a
+claim, when it comes, has already survived the test that would
+have caught its predecessors lying.
+
+---
+
+## 5. The order of the work
+
+The three applications are not a programme to be built in
+parallel; they are a sequence, ordered by evidence per unit
+cost, and each reprices the next.
+
+**Application B first.** It requires nothing that does not
+exist — the calculator, the governor ledger, the tick logs are
+live — and it attacks a measured failure with receipts (§3.1).
+Its A/B is also this document's cheapest instrument: it
+measures plan persistence, an assumption §6 shows the whole
+citizens' line standing on, as a by-product of work that pays
+for itself if it succeeds at all.
+
+**Application A second, and gated.** Stage 0 decides whether a
+frame-based digest has a decode cost worth attacking; Stage
+0.5 decides whether the rolling axis pays on it. Both are run
+only against the bar §2.5 names: the exact, free state-feed
+digest that already serves the current world. Rolling
+primitives do not get to win against a straw digest.
+
+**Application C last, and offline.** It is not a build at all
+until its replay test flips the verdict (§4.4). Its cost until
+then is analysis time on recordings the programme already
+holds.
+
+The shared machinery — ledger as base, external verifier,
+surprise invalidation — is specified once, in §0 and §1, and
+instantiated three times. Nothing in the sequencing asks any
+application to wait for another's *machinery*; each runs on
+today's substrate, and what transfers between them is not code
+but measured constants: acceptance rates, crossover change
+rates, invalidation frequencies — the numbers §6 says the
+design is standing on without yet knowing.
+
+---
+
+## 6. What would have to be true
+
+The thesis holds with qualifications (§1.5). The qualifications
+rest on conditions this document has asserted, priced, or
+assumed — not yet measured. They are collected here, each with
+the part of the design that falls if it is false. If several
+fall together, what remains is the batch system, honestly
+operated — which is the correct failure shape for an
+amortisation scheme whose premises did not survive contact.
+
+1. **The frame-based digest must earn its place.** §2 presumes
+   frames carry what state feeds cannot — uninstrumented
+   entities, structure, the visual world beyond the server's
+   model. Against today's world the state-feed digest is exact
+   and free, and rolling primitives do not settle that
+   argument; they only price the frame digest's decode once it
+   exists. If the frame digest never beats the free one on
+   anything a citizen consumes, §2 is a well-measured answer
+   about a component the platform does not need.
+2. **Plans must persist.** §3 assumes a citizen's plan at tick
+   *t+1* is mostly the plan at tick *t*, differing in a step or
+   two. That distribution — continuation depth against churn —
+   is assumed, not measured; nobody has counted it. The §3.3
+   A/B measures it as a by-product (invalidation causes,
+   continuation depths), but if real plans churn wholesale from
+   tick to tick, plan-delta drafting is ceremony performed on a
+   non-persistent workload, and the mind-second savings were
+   never there to take.
+3. **Verification must stay cheaper than decode, per field, in
+   practice.** §1.2's condition must hold at field granularity
+   on real workloads, not in the cost model's algebra.
+   Server-truth checks are free in the league's world;
+   frame-crop checks, calculator passes, and probes are not.
+   Wherever *C_verify* approaches *C_full* for a field, rolling
+   that field stops paying regardless of acceptance rate — and
+   the boundary is found only by running §2.3 and §3.3, not by
+   argument.
+4. **The crossover must sit above the operating point.** Each
+   application's world must spend its normal life below the
+   change rate at which rolling stops paying (§1.4):
+   quiet-enough scenes, steady-enough plans, stable-enough
+   streams. A workload that lives in regime change makes
+   rolling strictly worse than batch, and no drafter quality
+   fixes that — it is a property of the scene, not of the
+   system.
+5. **Drafter and verifier must be genuinely independent.**
+   Every application's verifier must draw on evidence the
+   drafter cannot influence: server truth, post-execution world
+   evidence, satisfiability, planted probes. If in any
+   deployment the verifier quietly degrades into a second read
+   of the drafter's own output, §1.2 has failed in fact while
+   holding on paper — and the failure is silent, which is the
+   worst kind this programme knows.
+6. **The counterweights must bound poisoning at their priced
+   cost.** §1.3's periodic re-derivation and surprise
+   invalidation must keep a committed error's lifetime short
+   enough that no application builds on a poisoned base. If
+   staying safe requires the reconciliation interval to shrink
+   toward every tick, the rolling saving is consumed by the
+   audit tax and the honest system is the batch one.
+7. **The trivial drafter must be adequate to Stage 0.5's
+   question.** §2.3 reads Arm 2 (extrapolation only) against
+   Arm 3 (oracle) as separating "rolling does not pay here"
+   from "the drafter is too weak". That reading requires the
+   oracle arm to be constructible from ground truth as
+   specified, and the trivial drafter to stand fairly for cheap
+   drafting. If practical drafting lives far above trivial yet
+   far below oracle, Stage 0.5 bounds the answer without giving
+   it — and a learned drafter becomes a research item, not the
+   priced upgrade §2.3 describes.
+8. **Surprise must stay exceptional.** Surprise-triggered
+   invalidation (§1.3, §3.2) is priced as an exception path.
+   If the worlds and citizens surprise the system constantly,
+   invalidation becomes the main path, the ledger is perpetually
+   rebased, and the architecture pays rolling costs for batch
+   behaviour. The invalidation rate is therefore a health
+   metric for the whole synthesis, not for any one application
+   — and a synthesis whose worlds will not hold still is a
+   batch system with extra machinery, whatever its per-tick
+   receipts say.
 ---
 
 ## Addendum 2026-11-07 — Seat harvest (ZCode Orin, ZCode ProArt, MCode ProArt)
