@@ -1,0 +1,1 @@
+- 2026-11-06 — slice2/presence/B0-RESULT.md published: Presence v4 B0 spike result (cascade shape PASS on both budgets; the named /v1/realtime transport walled for the text brain); status line added to slice2/presence/V4-DESIGN.md.

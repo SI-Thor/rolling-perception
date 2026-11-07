@@ -2,7 +2,9 @@
 
 Status: design, 2026-11-02. No code, no downloads, no Thor changes —
 the Slice-1 soak and the live v3 presence stack are running and this
-lane touched neither. Casey direction (2026-11-02): presence becomes
+lane touched neither.
+B0 spike: ran 2026-11-06 — result in B0-RESULT.md (shape PASS, named transport walled).
+Casey direction (2026-11-02): presence becomes
 a real-time voice system, tappable on the fly — the user can
 interrupt (barge-in) while the system is speaking. Enabler: llama.cpp
 v0.8.0 (ggml-org) ships a realtime voice stack. This document designs
