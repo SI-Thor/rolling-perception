@@ -168,3 +168,96 @@ undelivered. Reasoning OFF: all 18 delivered; correct except p2 at every k.
   are a property of each run's own forward passes.
 - n=6 prompts, greedy decoding, one artefact: descriptive statistics only,
   no significance claims.
+
+## Addendum 2026-11-07 — The learned governor: a clean negative
+
+The measurement above closed with a conditional: contraction is real but
+carries no per-prompt outcome information, so cascading loop allocation would
+have to use an external or learned signal. That allocator has now been built
+and honestly evaluated against the recorded matrix (workspace
+`dory-taps-governor/`: REPORT.md, code/governor.py, results/results.json;
+labels re-derived from the raw outputs with 0 mismatches against
+manifest.json). Verdict: **clean negative.** Nothing was tuned until it won;
+all numbers are leave-one-prompt-out over the six reasoning-on prompts, scored
+as delivered answers per 100 decode-cost-seconds under the smoke's measured
+rates (19.7 / 13.0 / 10.4 / 7.6 tok/s at k = 1–4).
+
+| policy | delivered | cost (s) | deliv / 100 cost-s |
+|---|---|---|---|
+| fixed k=2 | 2 | 395.9 | **0.505** |
+| tree governor | 2 | 401.3 | 0.498 |
+| contraction-threshold rule | 2 | 414.4 | 0.483 |
+| LR governor | 1 | 452.0 | 0.221 |
+| oracle cascade (bound, not a policy) | 3 | 411.1 | 0.730 |
+
+- **Fixed k=2 wins.** The tree and the threshold rule tie it on deliveries
+  and lose slightly on cost — their skill is having learned to almost never
+  deviate. The LR governor does strictly worse than every fixed-k baseline:
+  its single deviation (p6 to k=3) lands exactly on a harness-noise cell and
+  costs one delivery and 56 s.
+- **The scorer is anti-predictive.** Refitting the identical LR pipeline on
+  label-shuffled data scored at or above the true model in **300 of 300**
+  permutations (null mean 0.335, null p95 0.505, true 0.221). Even fit
+  in-sample on all 18 rows, the LR's coefficients on the loop-count terms are
+  exactly 0.0 — there is no systematic k effect for it to find.
+- **The anatomy explains why.** Every fixed k delivers exactly 2 of 6 in the
+  reasoning-on arm. Empirical marginal gains of an extra pass are zero for
+  p1, p2, p4, p5; the only k-dependent variation in all 18 runs sits in two
+  cells — p3 gains at k=3 then loses it at k=4, p6 loses at k=3 then regains
+  it at k=4 — and those are precisely the two cells (k3-p3, k3-p6) where this
+  harness and the smoke harness graded opposite outcomes, as the honesty
+  notes above already record. All allocator-exploitable variation on present
+  evidence is termination-margin harness noise, not signal. Even the
+  oracle's +45% headroom rests entirely on one of those cells.
+- **The decision-time constraint was honoured, and it matters.** A real
+  cascade must decide before paying for pass 3, so the only taps observable
+  at decision time are features of the pass-2 delta series d2 (level, spread,
+  trend, slope, near-settled fraction, over probe windows of 32/64/128
+  tokens). The headline r3 of the study above is a pass-3 quantity and is
+  **not available to any real allocator**. The negative is therefore stronger
+  than the study's: not only does r3 fail to separate outcomes, the full d2
+  family a real allocator could actually use fails too, at every window and
+  every regularisation tried (λ ≥ 3 collapses the LR to fixed k=2; gifting
+  the probe for free moves every cascade metric by ≤0.002 — not a probe-cost
+  artefact). The reasoning-off arm is degenerate for allocation: 18/18
+  delivered at k=2/3/4, correctness perfectly k-invariant — minimum k is
+  trivially optimal there.
+
+Standing recommendation: **do not implement the cascade behind the taps
+flag.** The policy taken to the fight is specified precisely enough to build
+(probe W=64 tokens at k=2, score k ∈ {2,3,4} by predicted delivery per
+expected cost, switch for the remainder), and the evidence says its learned
+step is machinery around "always choose 2". If loop count ever becomes a
+runtime knob for this model, the evidence supports a constant: **k=2 for
+reasoning-on** (k=1 under-delivers at 1/6 despite the lowest cost; k≥3 buys
+nothing measurable), **minimum k for reasoning-off**.
+
+Cross-references: this closes the WSP synthesis §5 fork in favour of
+**Branch B** for allocation — no learned or threshold allocator is carried
+forward from this dataset. It also fires the DESIGN-EXTERNAL-WEIGHT-LOOP E1
+kill criterion **as written**: the recorded taps matrix cannot support a
+learned per-prompt allocation decision, so E1's learned-allocation leg does
+not proceed on this data.
+
+What would change the verdict — the negative is about this dataset, whose
+limits are precise:
+
+- **Replicated labels.** Multiple seeds/runs per (prompt, k) cell, graded
+  identically, so per-cell delivery *rates* replace single Bernoulli draws;
+  the two disagreeing cells suggest run-to-run variance is the dominant term.
+- **Prompt count.** On the order of 50–100 prompts with replicated cells
+  before an effect of the oracle-hinted size (~+1 delivery per 6 prompts)
+  could be fit and honestly held out with a 2–3-feature model.
+- **Richer pre-pass-3 signals.** Everything currently observable before
+  pass 3 is a norm of a hidden-state difference. Token logits / entropy over
+  the probe window, or pass-1 state geometry, are untested signal classes —
+  ruling them in or out requires extending the taps; what is ruled out is
+  only the d2-norm family and r-style ratios.
+- **A graded outcome.** Binary delivery is a termination-margin phenomenon
+  here, and it saturates with reasoning off. Answer quality that actually
+  varies with loop count is a different — possibly learnable — problem, not
+  measurable in this dataset.
+
+Reproduce: `python3 code/build_dataset.py && python3 code/governor.py` in
+`dory-taps-governor/` (~2.5 min; the permutation null dominates). Thor
+originals untouched throughout; all work ran on copies.
