@@ -782,3 +782,194 @@ failure is recognisable when it arrives.
 experiments inherit), STUDY-VFLASH (the within-object decoding
 result), DORY-TAPS (the seam instrumentation and the verdict
 that allocation goes external).*
+
+---
+
+## Addendum 2026-11-07 — Seat take: ProArt Claude Code
+
+*This addendum records the contribution of a seat the main
+design did not use: Claude Code on the ProArt, run as a pure
+thinking tier (headless, no tools, the brief embedded whole;
+the full take is held in the lane's seat record as
+weightloop-claude-code-proart). The take was asked one
+question — whether the external loop is a real advantage over
+one-shot introspective authoring, or ceremony around the same
+limits. Its answer amends this design in one place, sharpens
+it in a second, strengthens the experiment discipline in a
+third, and lodges one challenge as a hypothesis. Nothing
+above is overwritten: each item below names the section it
+touches and whether it amends, sharpens, or merely records.*
+
+### A.1 The verifier is a consumable — §3 gains a verifier budget
+
+The design treats held-out probe batteries as the gate's
+ground (§3, §5-E2) and names battery honesty as the safety
+surface (§6). The take's correction: **even an honest battery
+is depleted by use.** Every verification call leaks
+information about the probes into the loop's choices. A
+propose-and-select loop running hundreds of commits is an
+adaptive optimizer aimed at its own probe set, and it will
+fit the held-out set the way public leaderboards get fitted —
+no gradients needed. Each delta passes its check; the total
+drifts. This sharpens §6 rather than contradicting it: the
+verification surface is the safety surface, and it is also a
+*consumable* — spent a little by every commit it certifies.
+
+§3 therefore gains a **verifier budget**, with three tiers of
+probes:
+
+- **Dev probes** — visible to the proposer; spend freely.
+- **Gate probes** — the probes that decide commits, accessed
+  only through a limited-information mechanism
+  (Thresholdout-style noisy answers, or a small bit budget
+  per query), so that a commit decision cannot transmit the
+  gate set back into the proposer's search.
+- **A sealed audit set** — touched only on a fixed schedule,
+  never used to decide a commit; its sole job is to measure
+  the gate set's own drift.
+
+Gate probes are **retired and regenerated on a schedule**, by
+a generator that does not share weights with the proposer. A
+widening gap between gate-set and audit-set performance is a
+**divergence alarm**: the loop is fitting its judge, and
+commits freeze until the budget is repaired. This also
+corrects one premise of §5-E2 as written: a *fixed* battery
+is right for a single pass around the loop, and wrong as a
+standing design, because a battery that stays fixed while the
+loop iterates becomes the loop's true objective.
+
+The failure mode has a name, and it is visible at ledger
+level, not at commit level: **verifier capture**, in two
+channels that compound.
+
+1. **Adaptive overfitting** (above): the loop slowly optimizes
+   its judge in place of the behaviour the judge stands for.
+2. **Operational steering — the input-shaping attack.** The
+   loop takes its failure signals from live operation.
+   Whoever can shape the input stream shapes which failures
+   get flagged, and thereby shapes which deltas get proposed
+   and verified — a *verified* write path into the weights,
+   since each steered delta genuinely passes the checks its
+   steering arranged to have run. Real-time data poisoning,
+   with a governance stamp on every step.
+
+Neither channel is catchable locally, because each delta
+really does pass. The damage shows only in the distribution
+of committed deltas and in the gate/audit gap — which is why
+both are monitored at ledger level, and why the take's
+mitigations bind at the trigger rather than at the commit:
+failure signals that can trigger authoring must come from
+sources the operating inputs cannot produce (curated
+batteries, or flags confirmed by a human or a separate
+judge); commits are rate-limited per input source; and every
+behaviour delta must carry a mechanism that survives
+ablation, because steered edits tend to have mechanisms that
+do not hold up. The take's expectation is recorded without
+endorsement or rebuttal: even with these mitigations,
+verifier capture is what limits deployment of the loop in
+open-input settings.
+
+### A.2 Staging — a hypothesis against §2's fence, recorded as a hypothesis
+
+§2 holds the fence: authored patching is behaviour
+deployment; it measures zero on procedure, per edit, and the
+design builds on that measurement. The take accepts the
+per-edit measurement and challenges the inference from one
+edit to many: **staging**. Edit *k* installs a readout that
+makes a latent distinction linearly available at a seam — a
+§2.1-permitted act, deployment of existing structure. Edit
+*k+1* routes behaviour on that readout — again a §2.1 act.
+Each step compounds *inside* the permitted lane rather than
+escaping it; the claim is that a chain of such steps can
+assemble small amounts of procedure out of steps that each
+look like routing, reaching what a single edit measurably
+cannot. One-shot introspection cannot do this at all, because
+it cannot check its intermediate states. Of everything the
+take offers, staging is the only capability-shaped claim —
+and it is untested.
+
+It is therefore recorded as **a hypothesis with its test, not
+a design premise**. §2 is not amended: procedure remains
+denied as normal operation (§2.2), and staging joins the
+writer-derived procedure proposals already gated there —
+admissible only as an experiment. If the hypothesis is ever
+promoted, it enters through §8 as a new load-bearing unknown;
+it does not enter by quietly widening §2.1.
+
+Its test is the two-family experiment of A.3: family **S**
+(separable — format and behaviour failures where triage
+separates at AUC above 0.9, the known-good regime) and family
+**P** (procedure — a novel deterministic transform or a short
+arithmetic procedure, triage AUC near 0.5, where one-shot
+authoring measures zero). Staging runs to depth K ≤ 4
+(instrument, route, route). The hypothesis lives only if
+gains on P grow with K; a flat curve is the fence reasserting
+itself through the experiment, which is also a result worth
+having.
+
+### A.3 Baseline discipline for E2-class tests — §5's kill criteria strengthened
+
+§5-E2 as designed tests the seam: its kill criterion is that
+shadow and canary agree. The take's point, adopted here: that
+criterion never tests the *author*. A loop can pass E2 with
+the authoring model contributing nothing the verifier did not
+supply — in which case the author component is ceremony,
+however good the governance around it. For E2-class tests —
+any test whose result will be cited as evidence about the
+loop — four conditions are run, **matched on total compute
+and on verifier calls**, scored **only on the sealed audit
+set** (A.1), with off-target drift measured as KL divergence
+of next-token distributions on a fixed, broad, generic
+corpus: batteries measure only what someone thought to test,
+and the KL term is the collateral instrument for the damage
+nobody thought to test for.
+
+- **A. One-shot introspective authoring** — best of N at the
+  same total token budget.
+- **B. The external loop** — staging to depth K, readouts
+  permitted.
+- **C. Verifier-matched random search** — sparse random or
+  evolutionary search over the same parameter mask, with the
+  same verifier and the same number of verifier calls.
+- **D. Rank-1 LoRA** — trained on the same number of labelled
+  probes.
+
+Kill criteria, decided in advance:
+
+1. **Staging does not exceed the ceiling.** On P, B beats A
+   by less than 5 points absolute at any K ≤ 4, or B's gain
+   does not increase with K → composition does not escape
+   the ceiling; the capability claim is dropped and only the
+   governance pipeline is kept.
+2. **The author is not the power source.** On S, C reaches at
+   least 80% of B's gain at equal verifier calls → the
+   verifier is doing the work; the author is replaced by
+   cheap search, and weight-reading is recorded as a
+   diagnostic tool, not a writing instrument.
+3. **Not worth the complexity.** On either family, D matches
+   B within 2 points at equal or lower off-target KL → use
+   LoRA with a ledger and rollback; skip authoring.
+4. **The loop is fitting its judge.** B's gate-to-audit gap
+   exceeds twice A's → fix the verifier budget (A.1) before
+   anything else runs.
+
+Survival is all four at once: B beats A on P with gains
+growing in K, beats C by a clear margin on S, and stays
+inside its KL bound.
+
+The seat's prior is recorded **as a prior, not a result**:
+kill criterion 2 fires first — verifier-matched random search
+matches the loop on the separable family — and criterion 1
+fires for the procedure family beyond K = 2. The design
+holds no position on either. They are written here so that
+when the experiment runs, the prediction it is testing
+against is on the record before the numbers are.
+
+*The take proposes more than this addendum adopts — a cheap
+triage gate that routes failures by measured separability
+before any authoring spend, instrumentation-first edits as
+their own ledger class, and the ledger rebuilt as a
+dependency graph with cascading rollback. Those stand in the
+seat record, unadopted. If any is taken up, it will be taken
+up the way these were: named, sectioned, and argued against
+the measurements.*
