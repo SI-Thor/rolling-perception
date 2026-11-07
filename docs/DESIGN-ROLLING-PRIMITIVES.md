@@ -503,3 +503,94 @@ that baseline at equal total spend, not merely be interesting.
 
 ### 4.
 ...[truncated 9113 chars]
+---
+
+## Addendum 2026-11-07 — Seat harvest (ZCode Orin, ZCode ProArt, MCode ProArt)
+
+*Three prepaid fleet seats were given the identical brief behind
+this design and asked for independent takes: ZCode (GLM) on the
+Orin, ZCode (GLM) on the ProArt, and MCode (MiniMax) on the
+ProArt. The takes and a comparison are held in the lane's
+records. What follows is what the harvest changes, confirms, or
+challenges in the design above — including where a seat was
+wrong.*
+
+**Convergence.** All three seats independently rebuilt the
+synthesis as a transactional system rather than a faster
+pipeline: the change ledger is the source of truth, canonical
+state is the replay of committed deltas, and agents at different
+temporal resolutions are readers at different snapshot levels of
+one log. All three put the design's weight where §1.2 does:
+verification is the load-bearing cost, and it must be scoped to
+the delta — the verifier sees the old primitive, the proposed
+delta, and the evidence window, never the whole world. All three
+rejected the cost slogan of §0 as median-true and tail-false: at
+regime change, acceptance collapses and the system pays drafting
+on top of full re-perception, strictly worse than batch at the
+moment of maximum danger — so batch mode survives permanently,
+as fallback, garbage collector, and audit mechanism. All three
+treated cumulative error as a permanent audit tax: periodic full
+re-derivation diffed against committed state, a cost that is
+never finished being paid (§1.3). And all three sequenced the
+first experiment the way §2.3 does — a deliberately dumb
+drafter, constant-velocity extrapolation or raw region diffs —
+to test the economics and the load-bearing assumption before any
+learned drafter is built. Stage 0.5's trivial arm is that
+experiment.
+
+**The rejection channel.** Both GLM takes named the same missed
+component, in the same words: the rejection channel. A rejected
+draft is currently waste; in a rolling system it is perception
+data — the record of where the system's model of the world was
+wrong, in what direction, at what rate — and it can be routed:
+rejection is a surprise signal, able to wake slower-tapping
+agents and to feed the audit schedule, and the abort path earns
+its engineering budget on that basis. The agreement is recorded
+with its limit stated plainly: the two takes come from one model
+family, so this is a single strong sample developed twice —
+partial independence, not two independent witnesses.
+
+**The epistemic third state.** The MCode take diverged, and its
+missed component is the one this design lacked entirely: a delta
+is three-valued, not two — confirmed-changed,
+confirmed-unchanged, and *unobservable-at-this-tick*. Occlusion
+means "no delta" does not mean "no change"; a two-valued
+protocol silently launders the unobserved into the unchanged,
+and every downstream derivation inherits the error, so the
+verifier must be allowed to answer "insufficient observation."
+The league's world digest v0 already implements a citizen-level
+form of this rule — a stale feed reads as unknown, never as
+calm — and the design above is amended in kind: any primitive
+carried forward on unobservable evidence carries the third state
+with it.
+
+**The ledger as invalidation index.** The harvest's sharpest
+single mechanism: the ledger's second job is indexing
+invalidation. Every derived artefact — a plan, a prediction, a
+digest entry — anchors to a ledger position and a region set,
+so a committed delta invalidates exactly the derivations that
+depended on what changed, in time proportional to the
+invalidated set rather than to the number of agents. That, more
+than the drafting itself, is what makes the multi-agent
+economics of §3 close.
+
+**A challenge to the governor, recorded, not adopted.** The
+seats were unanimous that the league governor's unit —
+mind-seconds per call — is the wrong thing to meter: per-call
+pricing invites conservative drafting and hidden change. Their
+candidates differed (reader demand; commit bandwidth per
+accepted delta; derivations invalidated), and the harvest's own
+synthesis is to price verification, the load-bearing cost. The
+challenge stands open: the governor's unit is unchanged, and
+the §3.3 A/B protocol still measures in mind-seconds — its
+results should be read knowing the unit itself is contested.
+
+**One flag, adjudicated.** The MCode take asserted that
+VFlash's code is openly available and its runtime could be
+pointed at this design's delta schema. That was checked against
+the NVIDIA project page and the release trackers on 2026-11-07:
+a GitHub link exists, but no public code, weights, or licence
+could be reached. STUDY-VFLASH's finding stands — as of this
+writing there is nothing to install — and the claim is filed as
+announcement-vs-artefact confusion: a paper's availability
+mistaken for a release.
